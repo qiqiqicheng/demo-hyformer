@@ -31,4 +31,4 @@ ckpt_path: null
 
 seed: 728
 
-# optimized_metric: "val/mrr"  # TODO: change this to your validation metric, used for hyperparameter optimization
+optimized_metric: "val/auc"

@@ -16,6 +16,7 @@ from demo_hyformer.utils import (
 log = RankedLogger(__name__, rank_zero_only=True)
 
 
+# TODO: add eval config
 @task_wrapper
 def evaluate(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
     """Evaluates given checkpoint on a datamodule testset.

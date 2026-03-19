@@ -172,7 +172,7 @@ class DemoDataModule(L.LightningDataModule):
         max_delta_tt_bucket,
         val_ratio: float = 0.2,
         num_workers=os.cpu_count() // 4,  # type: ignore
-        data_path: Path = DATA_DIR / "processed" / "prepared_train.parquet",
+        data_path: Path = DATA_DIR / "processed" / "prepared_data.parquet",
     ):
         super().__init__()
         self.batch_size = batch_size
@@ -228,6 +228,7 @@ class DemoDataModule(L.LightningDataModule):
         )
 
     def test_dataloader(self):
+        # TODO: finish test_dataloader on test dataset
         raise NotImplementedError
 
 

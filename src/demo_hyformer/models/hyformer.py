@@ -49,7 +49,7 @@ class HyFormer(nn.Module):
         num_blocks: int,
         ffn_hidden_dim: int,
         num_heads: int,
-        mlp_hidden_dim: list[int] = [1024, 512, 256],
+        mlp_hidden_dim: list[int] = [1024, 512],
         num_seq: int = 3,
         drop_out: float = 0.1,
         *args,
@@ -94,6 +94,7 @@ class HyFormer(nn.Module):
         )
 
         self.non_seq_multi_linear = nn.Linear(self.max_seq_len * self.d_model, self.d_model)
+        # TODO: add other transforms like mean / weighted mean to avoid overfitting
 
         self.non_seq_embedding_mlps = []
         for f in self.non_seq_embedding_features:
@@ -140,7 +141,6 @@ class HyFormer(nn.Module):
             nn.Linear(2 * len(self.item_seq_features) * self.d_model, self.d_model),
         )
 
-        self.semantic_groups = semantic_groups_fn()
         if self.semantic_groups:
             self.num_nonseq_tokens = len(self.semantic_groups)
             log.info(f"Using semantic grouping with {self.num_nonseq_tokens} groups: \n{self.semantic_groups}")
@@ -175,7 +175,7 @@ class HyFormer(nn.Module):
         in_dim = self.num_seq * (self.num_global_tokens + self.num_nonseq_tokens) * self.d_model
         for hi in self.mlp_hidden_dim:
             layers.append(nn.Linear(in_dim, hi))
-            layers.append(nn.BatchNorm1d(hi))
+            layers.append(nn.LayerNorm(hi))
             layers.append(nn.SiLU())
             layers.append(nn.Dropout(p=self.drop_out))
             in_dim = hi
@@ -183,7 +183,7 @@ class HyFormer(nn.Module):
         layers.append(nn.Linear(in_dim, 1))
         self.mlp_head = nn.Sequential(*layers)
 
-    def _get_embedding(self, x: dict) -> tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+    def _get_embedding(self, x: dict) -> tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor], torch.Tensor]:
         """
         non_seq_features:
             * non_seq_sparse_features: normal embedding -> [B, M1, D]
@@ -198,10 +198,11 @@ class HyFormer(nn.Module):
             * concat + mlp -> [B, T. D]
 
         Returns:
-            tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+            tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor], torch.Tensor]:
                 non_seq_x: [B, M, D]
                 seq_x: [B, S, T, D]
                 seq_time_diffs: [B, S, T] or None
+                seq_valid_mask: [B, S, T]
         """
         # non_seq feature
         non_seq_sparse_emb = self.embedding_layer(x["non_seq"], self.non_seq_sparse_features)  # [B, M1, D]
@@ -215,7 +216,7 @@ class HyFormer(nn.Module):
         non_seq_embedding_emb_parts = []
         for i, emb in enumerate(non_seq_embedding_embs):
             B, _, D_in = emb.size()
-            emb_flat = emb.view(B, D_in)  # [B, D_in]
+            emb_flat = emb.reshape(B, D_in)  # [B, D_in]
             transformed = self.non_seq_embedding_mlps[i](emb_flat)  # [B, D]
             non_seq_embedding_emb_parts.append(transformed.unsqueeze(1))  # [B, 1, D]
 
@@ -225,7 +226,7 @@ class HyFormer(nn.Module):
             [non_seq_sparse_emb, non_seq_multi_emb, non_seq_embedding_emb], dim=1
         )  # [B, M_full, D]
         if not self.semantic_groups:
-            non_seq_x = self.full_non_seq_mlp(full_non_seq_x.view(full_non_seq_x.size(0), -1)).view(
+            non_seq_x = self.full_non_seq_mlp(full_non_seq_x.reshape(full_non_seq_x.size(0), -1)).reshape(
                 -1, self.num_nonseq_tokens, self.d_model
             )  # [B, M, D]
         else:
@@ -235,19 +236,19 @@ class HyFormer(nn.Module):
         # seq feature
         action_seq_emb = (
             self.embedding_layer(x["action_seq"], self.action_seq_features)  # [B, M_action, T * D]
-            .view(-1, len(self.action_seq_features), self.max_seq_len, self.d_model)  # [B, M_action, T, D]
+            .reshape(-1, len(self.action_seq_features), self.max_seq_len, self.d_model)  # [B, M_action, T, D]
             .permute(0, 2, 1, 3)  # [B, T, M_action, D]
             .reshape(-1, self.max_seq_len, len(self.action_seq_features) * self.d_model)  # [B, T, M_action*D]
         )
         content_seq_emb = (
             self.embedding_layer(x["content_seq"], self.content_seq_features)  # [B, M_content, T * D]
-            .view(-1, len(self.content_seq_features), self.max_seq_len, self.d_model)  # [B, M_content, T, D]
+            .reshape(-1, len(self.content_seq_features), self.max_seq_len, self.d_model)  # [B, M_content, T, D]
             .permute(0, 2, 1, 3)  # [B, T, M_content, D]
             .reshape(-1, self.max_seq_len, len(self.content_seq_features) * self.d_model)  # [B, T, M_content*D]
         )
         item_seq_emb = (
             self.embedding_layer(x["item_seq"], self.item_seq_features)  # [B, M_item, T * D]
-            .view(-1, len(self.item_seq_features), self.max_seq_len, self.d_model)  # [B, M_item, T, D]
+            .reshape(-1, len(self.item_seq_features), self.max_seq_len, self.d_model)  # [B, M_item, T, D]
             .permute(0, 2, 1, 3)  # [B, T, M_item, D]
             .reshape(-1, self.max_seq_len, len(self.item_seq_features) * self.d_model)  # [B, T, M_item*D]
         )
@@ -257,6 +258,16 @@ class HyFormer(nn.Module):
         item_seq_x = self.item_seq_mlp(item_seq_emb)  # [B, T, D]
 
         seq_x = torch.stack([action_seq_x, content_seq_x, item_seq_x], dim=1)  # [B, S, T, D]
+
+        seq_timestamps = torch.stack(
+            [
+                x["action_seq"]["action_seq_timestamp"],
+                x["content_seq"]["content_seq_timestamp"],
+                x["item_seq"]["item_seq_timestamp"],
+            ],
+            dim=1,
+        )  # [B, S, T]
+        seq_valid_mask = seq_timestamps.gt(0)
 
         # seq_time_diffs
         seq_time_diffs = torch.stack(
@@ -268,17 +279,16 @@ class HyFormer(nn.Module):
             dim=1,
         )  # [B, S, T]
 
-        return non_seq_x, seq_x, seq_time_diffs
+        return non_seq_x, seq_x, seq_time_diffs, seq_valid_mask
 
     def forward(
         self,
         x: dict,
     ) -> torch.Tensor:
-        non_seq_x, seq_x, seq_time_diffs = self._get_embedding(x)
+        non_seq_x, seq_x, seq_time_diffs, seq_valid_mask = self._get_embedding(x)
         # non_seq_x: [B, M, D] ; seq_x: [B, S, T, D]
-        B, S, T, D = seq_x.size()
-        M = non_seq_x.size(1)
-        global_tokens = self.query_generation(non_seq_x, seq_x)  # [B, S, N, D]
+        B = seq_x.size(0)
+        global_tokens = self.query_generation(non_seq_x, seq_x, seq_valid_mask)  # [B, S, N, D]
         non_seq_tokens = non_seq_x.unsqueeze(1).expand(-1, self.num_seq, -1, -1)  # [B, S, M, D]
         seq_tokens = seq_x  # [B, S, T, D]
 
@@ -287,6 +297,7 @@ class HyFormer(nn.Module):
                 global_tokens,
                 non_seq_tokens,
                 seq_tokens,
+                seq_valid_mask=seq_valid_mask,
                 seq_time_diffs=seq_time_diffs,
             )
 
@@ -342,22 +353,28 @@ class QueryGeneration(nn.Module):
         bound_2 = 1 / math.sqrt(fan_in_2) if fan_in_2 > 0 else 0
         nn.init.uniform_(self.b2, -bound_2, bound_2)
 
-    def forward(self, non_seq_x: torch.Tensor, seq_x: torch.Tensor) -> torch.Tensor:
+    def forward(self, non_seq_x: torch.Tensor, seq_x: torch.Tensor, seq_valid_mask: torch.Tensor) -> torch.Tensor:
         """
         Args:
             non_seq_x (torch.Tensor): [B, M, D]
             seq_x (torch.Tensor): [B, S, T, D]
+            seq_valid_mask (torch.Tensor): [B, S, T]
 
         Returns:
             torch.Tensor: first global_tokens [B, S, N, D]
         """
         B = non_seq_x.size(0)
 
-        seq_pooled = seq_x.mean(dim=2).unsqueeze(dim=2)  # [B, S, 1, D]
+        valid_counts = seq_valid_mask.sum(dim=2, keepdim=True)
+        # log.debug(f"Valid counts: {valid_counts}")
+        # if torch.any(valid_counts == 0):
+        #     raise ValueError("Encountered all-padding sequence while generating queries")
+        seq_weights = seq_valid_mask.unsqueeze(-1).to(dtype=seq_x.dtype)
+        seq_pooled = (seq_x * seq_weights).sum(dim=2, keepdim=True) / valid_counts.unsqueeze(-1).to(dtype=seq_x.dtype)
         non_seq_expanded = non_seq_x.unsqueeze(dim=1).expand(-1, self.num_seq, -1, -1)  # [B, S, M, D]
 
         global_info = torch.cat([seq_pooled, non_seq_expanded], dim=2)  # [B, S, M+1, D]
-        global_info_flat = global_info.view(B, self.num_seq, -1)  # [B, S, (M+1)*D]
+        global_info_flat = global_info.reshape(B, self.num_seq, -1)  # [B, S, (M+1)*D]
 
         h1 = torch.einsum("bsi,sih->bsh", global_info_flat, self.W1)  # [B, S, Hidden]
         h1 = h1 + self.b1.unsqueeze(0)  # [B, S, Hidden] + [1, S, Hidden] -> [B, S, Hidden]
@@ -368,7 +385,7 @@ class QueryGeneration(nn.Module):
         out_flat = torch.einsum("bsh,sho->bso", h1_act, self.W2)  # [B, S, N*D]
         out_flat = out_flat + self.b2.unsqueeze(0)  # [B, S, N*D] + [1, S, N*D] -> [B, S, N*D]
 
-        queries = out_flat.view(B, self.num_seq, self.num_global_tokens, self.d_model)  # [B, S, N, D]
+        queries = out_flat.reshape(B, self.num_seq, self.num_global_tokens, self.d_model)  # [B, S, N, D]
         queries = self.output_norm(queries)
 
         return queries
@@ -435,20 +452,23 @@ class HyFormerBlock(nn.Module):
         for proj in (self.k_proj, self.v_proj):
             nn.init.xavier_uniform_(proj)
 
-        nn.init.zeros_(self.o_proj)
+        nn.init.xavier_uniform_(self.o_proj)
         nn.init.zeros_(self.b_o)
 
         nn.init.kaiming_uniform_(self.ffn_W, a=math.sqrt(5), nonlinearity="relu")
         nn.init.zeros_(self.ffn_b)
-        nn.init.zeros_(self.ffn_out_W)
+        nn.init.kaiming_uniform_(self.ffn_out_W, a=math.sqrt(5), nonlinearity="relu")
         nn.init.zeros_(self.ffn_out_b)
 
-    def _query_decoding(self, Q: torch.Tensor, K: torch.Tensor, V: torch.Tensor) -> torch.Tensor:
+    def _query_decoding(
+        self, Q: torch.Tensor, K: torch.Tensor, V: torch.Tensor, seq_valid_mask: torch.Tensor
+    ) -> torch.Tensor:
         """
         Args:
             Q (torch.Tensor): [B, S, N, D]
             K (torch.Tensor): [B, S, T, D]
             V (torch.Tensor): [B, S, T, D]
+            seq_valid_mask (torch.Tensor): [B, S, T]
 
         Returns:
             torch.Tensor: [B, S, N, D]
@@ -456,23 +476,30 @@ class HyFormerBlock(nn.Module):
         B, S, N, D = Q.size()
         T = K.size(2)
 
+        # if torch.any(seq_valid_mask.sum(dim=-1) == 0):
+        #     raise ValueError("Encountered all-padding sequence while decoding queries")
+
         Q = self.query_input_norm(Q)
 
         head_dim = D // self.num_heads
 
-        Q_mha = Q.view(B, S, N, self.num_heads, head_dim).permute(0, 1, 3, 2, 4)  # [B, S, H, N, D/H]
-        K_mha = K.view(B, S, T, self.num_heads, head_dim).permute(0, 1, 3, 2, 4)  # [B, S, H, T, D/H]
-        V_mha = V.view(B, S, T, self.num_heads, head_dim).permute(0, 1, 3, 2, 4)  # [B, S, H, T, D/H]
+        Q_mha = Q.reshape(B, S, N, self.num_heads, head_dim).permute(0, 1, 3, 2, 4)  # [B, S, H, N, D/H]
+        K_mha = K.reshape(B, S, T, self.num_heads, head_dim).permute(0, 1, 3, 2, 4)  # [B, S, H, T, D/H]
+        V_mha = V.reshape(B, S, T, self.num_heads, head_dim).permute(0, 1, 3, 2, 4)  # [B, S, H, T, D/H]
 
+        attn_mask = seq_valid_mask.unsqueeze(2).unsqueeze(2).expand(-1, -1, self.num_heads, N, -1)
         attn_out = F.scaled_dot_product_attention(
             Q_mha,
             K_mha,
             V_mha,
+            attn_mask=attn_mask,
             dropout_p=self.drop_out if self.training else 0.0,
         )  # [B, S, H, N, D/H]
-        attn_out_reshaped = attn_out.permute(0, 1, 3, 2, 4).contiguous().view(B, S, N, D)  # [B, S, N, D]
+        attn_out_reshaped = attn_out.permute(0, 1, 3, 2, 4).reshape(B, S, N, D)  # [B, S, N, D]
 
-        out = torch.einsum("bsnd,sde->bsne", attn_out_reshaped, self.o_proj) + self.b_o.view(1, S, 1, D)  # [B, S, N, D]
+        out = torch.einsum("bsnd,sde->bsne", attn_out_reshaped, self.o_proj) + self.b_o.reshape(
+            1, S, 1, D
+        )  # [B, S, N, D]
         out = self.query_dropout(out)
         return self.query_output_norm(Q + out)
 
@@ -498,10 +525,9 @@ class HyFormerBlock(nn.Module):
         Q_ = self.boost_input_norm(Q_)
         sub_dim = D // T
         Q_hat = (
-            Q_.view(B, S, T, T, sub_dim)  # [B, S, T, T, D/T]
+            Q_.reshape(B, S, T, T, sub_dim)  # [B, S, T, T, D/T]
             .transpose(2, 3)  # [B, S, T, T, D/T]
-            .contiguous()
-            .view(B, S, T, D)  # [B, S, T, D]
+            .reshape(B, S, T, D)  # [B, S, T, D]
         )
 
         hidden = torch.einsum("bstd,stdh->bsth", Q_hat, self.ffn_W) + self.ffn_b.unsqueeze(0)  # [B, S, T, Hidden]
@@ -518,6 +544,7 @@ class HyFormerBlock(nn.Module):
         global_tokens: torch.Tensor,
         non_seq_tokens: torch.Tensor,
         seq_tokens: torch.Tensor,
+        seq_valid_mask: torch.Tensor,
         seq_time_diffs: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
@@ -525,24 +552,27 @@ class HyFormerBlock(nn.Module):
             global_tokens (torch.Tensor): [B, S, N, D]
             non_seq_tokens (torch.Tensor): [B, S, M, D]
             seq_tokens (torch.Tensor): [B, S, T, D]
+            seq_valid_mask (torch.Tensor): [B, S, T]
             seq_time_diffs (torch.Tensor | None): [B, S, T] or None
 
         Returns:
             tuple[torch.Tensor, torch.Tensor, torch.Tensor]: _description_
         """
         if seq_time_diffs is None:
-            H = self.kv_encoder(seq_tokens)  # [B, S, T, D]
+            H = self.kv_encoder(seq_tokens, seq_valid_mask=seq_valid_mask)  # [B, S, T, D]
         else:
             try:
-                H = self.kv_encoder(seq_tokens, time_diffs=seq_time_diffs)  # [B, S, T, D]
+                H = self.kv_encoder(
+                    seq_tokens, time_diffs=seq_time_diffs, seq_valid_mask=seq_valid_mask
+                )  # [B, S, T, D]
             except Exception as e:
                 log.info(f"kv_encoder does not support time_diffs, see {e}")
-                H = self.kv_encoder(seq_tokens)  # [B, S, T, D]
+                H = self.kv_encoder(seq_tokens, seq_valid_mask=seq_valid_mask)  # [B, S, T, D]
         H = self.kv_norm(H)
         K = torch.einsum("bstd,sde->bste", H, self.k_proj)  # [B, S, T, D]
         V = torch.einsum("bstd,sde->bste", H, self.v_proj)  # [B, S, T, D]
 
-        Q_tilda = self._query_decoding(global_tokens, K, V)  # [B, S, N, D]
+        Q_tilda = self._query_decoding(global_tokens, K, V, seq_valid_mask=seq_valid_mask)  # [B, S, N, D]
 
         Q_boost = self._query_boosting(non_seq_tokens, Q_tilda)  # [B, S, N + M, D]
 
@@ -560,8 +590,11 @@ class HyFormerModule(L.LightningModule):
         scheduler: Optional[Callable],
         embed_dim: int,
         val_at_k_list: list[int] = [1, 5, 10],
+        *args,
+        **kwargs,
     ):
         super().__init__()
+        log.info(f"Initializing HyFormerModule with {args, kwargs}")
         self.model = model
         self.val_metrics = CTRMetrics()
         self._optimizer = optimizer
@@ -591,7 +624,7 @@ class HyFormerModule(L.LightningModule):
 
     def test_step(self, batch, batch_idx):
         _ = batch_idx
-        _ = self._compute_loss(batch, stage="val")
+        _ = self._compute_loss(batch, stage="test")
         # TODO: add metrics config later
 
     def configure_optimizers(self):
@@ -625,7 +658,11 @@ class HyFormerModule(L.LightningModule):
 
         if stage == "val":
             # Flattened binary diagnostics (AUC, logloss, etc.)
-            self.val_metrics.update(probs.view(-1), labels.view(-1))
+            self.val_metrics.update(probs.reshape(-1), labels.reshape(-1))
+
+        if stage == "test":
+            # TODO: add test metrics later
+            pass
 
         return total_loss
 
@@ -698,9 +735,11 @@ if __name__ == "__main__":
 
         non_seq_x = torch.randn(batch_size, num_nonseq_tokens, d_model, device=device)
         seq_x = torch.randn(batch_size, num_seq, max_seq_len, d_model, device=device)
+        seq_valid_mask = torch.ones(batch_size, num_seq, max_seq_len, device=device, dtype=torch.bool)
+        seq_valid_mask[:, :, :2] = False
 
         try:
-            global_tokens = query_gen(non_seq_x, seq_x)
+            global_tokens = query_gen(non_seq_x, seq_x, seq_valid_mask)
             assert global_tokens.shape == (batch_size, num_seq, num_global_tokens, d_model)
             print(f"  ✓ QueryGeneration output shape: {global_tokens.shape}")
             assert torch.isfinite(global_tokens).all()
@@ -731,6 +770,7 @@ if __name__ == "__main__":
                     global_tokens,
                     non_seq_x.unsqueeze(1).expand(-1, num_seq, -1, -1),
                     seq_x,
+                    seq_valid_mask=seq_valid_mask,
                     seq_time_diffs=seq_time_diffs,
                 )
 
@@ -774,7 +814,7 @@ if __name__ == "__main__":
 
                 for i, blk in enumerate(blocks):
                     curr_global, curr_nonseq, curr_seq = blk(
-                        curr_global, curr_nonseq, curr_seq, seq_time_diffs=seq_time_diffs
+                        curr_global, curr_nonseq, curr_seq, seq_valid_mask=seq_valid_mask, seq_time_diffs=seq_time_diffs
                     )
                     print(f"  ✓ Block {i + 1} output shape: {curr_global.shape}")
 
@@ -834,7 +874,7 @@ if __name__ == "__main__":
 
             for blk in blocks:
                 curr_global, curr_nonseq, curr_seq = blk(
-                    curr_global, curr_nonseq, curr_seq, seq_time_diffs=seq_time_diffs
+                    curr_global, curr_nonseq, curr_seq, seq_valid_mask=seq_valid_mask, seq_time_diffs=seq_time_diffs
                 )
 
             final_rep = torch.cat([curr_global.reshape(batch_size, -1), curr_nonseq.reshape(batch_size, -1)], dim=1)
@@ -877,7 +917,6 @@ if __name__ == "__main__":
         print("=" * 80)
 
         max_seq_len = 12
-        d_model = 32
 
         print("\n[Creating Mock Sample Data]")
         print(f"  max_seq_len: {max_seq_len}")

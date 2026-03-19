@@ -147,18 +147,19 @@ class HSTUKVLayer(nn.Module):
         nn.init.xavier_uniform_(self.qkv_w)
         nn.init.zeros_(self.qkv_b)
 
-        nn.init.zeros_(self.o_w)
+        nn.init.xavier_uniform_(self.o_w)
         nn.init.zeros_(self.o_b)
 
         nn.init.kaiming_uniform_(self.ffn_w1, a=math.sqrt(5), nonlinearity="relu")
         nn.init.zeros_(self.ffn_b1)
 
-        nn.init.zeros_(self.ffn_w2)
+        nn.init.kaiming_uniform_(self.ffn_w2, a=math.sqrt(5), nonlinearity="relu")
         nn.init.zeros_(self.ffn_b2)
 
     def forward(
         self,
         x: torch.Tensor,
+        seq_valid_mask: torch.Tensor,
         rel_pos_bias: torch.Tensor | None = None,
         time_attn_bias: torch.Tensor | None = None,
         rope: "RoPEPositionEncoding | None" = None,
@@ -166,13 +167,16 @@ class HSTUKVLayer(nn.Module):
         B, S, T, D = x.shape
         head_dim = D // self.num_heads
 
+        # if torch.any(seq_valid_mask.sum(dim=-1) == 0):
+        #     raise ValueError("Encountered all-padding sequence in KV encoder")
+
         attn_input = self.attn_in_norm(x)
         qkv = torch.einsum("bstd,sdf->bstf", attn_input, self.qkv_w) + self.qkv_b.unsqueeze(0).unsqueeze(2)
         q, k, v = torch.split(qkv, D, dim=-1)
 
-        q = q.view(B, S, T, self.num_heads, head_dim).permute(0, 1, 3, 2, 4)
-        k = k.view(B, S, T, self.num_heads, head_dim).permute(0, 1, 3, 2, 4)
-        v = v.view(B, S, T, self.num_heads, head_dim).permute(0, 1, 3, 2, 4)
+        q = q.reshape(B, S, T, self.num_heads, head_dim).permute(0, 1, 3, 2, 4)
+        k = k.reshape(B, S, T, self.num_heads, head_dim).permute(0, 1, 3, 2, 4)
+        v = v.reshape(B, S, T, self.num_heads, head_dim).permute(0, 1, 3, 2, 4)
 
         if rope is not None:
             q, k = rope(q, k)
@@ -183,8 +187,10 @@ class HSTUKVLayer(nn.Module):
             attn_bias = attn_bias.expand(B, S, -1, -1, -1)
         if time_attn_bias is not None:
             attn_bias = time_attn_bias if attn_bias is None else (attn_bias + time_attn_bias)
-        if attn_bias is not None:
-            attn_bias = attn_bias.to(dtype=q.dtype)
+
+        padding_bias = torch.zeros(B, S, self.num_heads, T, T, device=q.device, dtype=q.dtype)
+        padding_bias = padding_bias.masked_fill(~seq_valid_mask.unsqueeze(2).unsqueeze(2), float("-inf"))
+        attn_bias = padding_bias if attn_bias is None else (attn_bias.to(dtype=q.dtype) + padding_bias)
 
         attn_out = F.scaled_dot_product_attention(
             q,
@@ -193,11 +199,12 @@ class HSTUKVLayer(nn.Module):
             attn_mask=attn_bias,
             dropout_p=self.drop_out if self.training else 0.0,
         )
-        attn_out = attn_out.permute(0, 1, 3, 2, 4).contiguous().view(B, S, T, D)
+        attn_out = attn_out.permute(0, 1, 3, 2, 4).reshape(B, S, T, D)
 
         attn_out = torch.einsum("bstd,sde->bste", attn_out, self.o_w) + self.o_b.unsqueeze(0).unsqueeze(2)
         attn_out = self.attn_dropout(attn_out)
         x = self.attn_out_norm(x + attn_out)
+        x = x * seq_valid_mask.unsqueeze(-1).to(dtype=x.dtype)
 
         ffn_input = self.ffn_in_norm(x)
         hidden = torch.einsum("bstd,sdh->bsth", ffn_input, self.ffn_w1) + self.ffn_b1.unsqueeze(0).unsqueeze(2)
@@ -207,7 +214,8 @@ class HSTUKVLayer(nn.Module):
         ffn_out = torch.einsum("bsth,shd->bstd", hidden, self.ffn_w2) + self.ffn_b2.unsqueeze(0).unsqueeze(2)
         ffn_out = self.ffn_out_dropout(ffn_out)
 
-        return self.ffn_out_norm(x + ffn_out)
+        out = self.ffn_out_norm(x + ffn_out)
+        return out * seq_valid_mask.unsqueeze(-1).to(dtype=out.dtype)
 
 
 class HSTUSeqKVEncoder(nn.Module):
@@ -346,7 +354,12 @@ class HSTUSeqKVEncoder(nn.Module):
 
         return token_time_emb, pair_time_bias
 
-    def forward(self, seq_tokens: torch.Tensor, time_diffs: torch.Tensor | None = None) -> torch.Tensor:
+    def forward(
+        self,
+        seq_tokens: torch.Tensor,
+        time_diffs: torch.Tensor | None = None,
+        seq_valid_mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
         """
         Args:
             seq_tokens (torch.Tensor): [B, S, T, D]
@@ -359,6 +372,13 @@ class HSTUSeqKVEncoder(nn.Module):
             raise ValueError(f"seq_tokens must be [B,S,T,D], got shape={tuple(seq_tokens.shape)}")
 
         B, S, T, D = seq_tokens.shape
+
+        if seq_valid_mask is None:
+            seq_valid_mask = torch.ones(B, S, T, device=seq_tokens.device, dtype=torch.bool)
+        else:
+            seq_valid_mask = seq_valid_mask.to(device=seq_tokens.device, dtype=torch.bool)
+        # if torch.any(seq_valid_mask.sum(dim=-1) == 0):
+        #     raise ValueError("Encountered all-padding sequence before KV encoding")
 
         x = self.input_norm(seq_tokens)
 
@@ -383,9 +403,11 @@ class HSTUSeqKVEncoder(nn.Module):
         x = self.input_dropout(x)
 
         for layer in self.layers:
-            x = layer(x, rel_pos_bias=rel_pos_bias, time_attn_bias=time_attn_bias, rope=rope)
+            x = layer(
+                x, seq_valid_mask=seq_valid_mask, rel_pos_bias=rel_pos_bias, time_attn_bias=time_attn_bias, rope=rope
+            )
 
-        return x
+        return x * seq_valid_mask.unsqueeze(-1).to(dtype=x.dtype)
 
 
 if __name__ == "__main__":

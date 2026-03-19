@@ -1,12 +1,15 @@
 _target_: demo_hyformer.models.hyformer.HyFormerModule
 
-embed_dim: 128
+num_global_tokens: 8
+num_nonseq_tokens: 10
+query_token_factor: ${eval:'${.num_global_tokens} + ${.num_nonseq_tokens}'}
+embed_dim: ${eval:'${.query_token_factor} * 8'}
 
 model:
   _target_: demo_hyformer.models.hyformer.HyFormer
-  num_global_tokens: 8
-  num_nonseq_tokens: 10
-  d_model: ${model.embed_dim}
+  num_global_tokens: ${..num_global_tokens}
+  num_nonseq_tokens: ${..num_nonseq_tokens}
+  d_model: ${..embed_dim}
   max_seq_len: ${data.max_seq_len}
   max_delta_tt_bucket: ${data.max_delta_tt_bucket}
   num_blocks: 5

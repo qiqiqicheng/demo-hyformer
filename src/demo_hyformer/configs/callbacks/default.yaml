@@ -9,13 +9,13 @@ defaults:
 model_checkpoint:
   dirpath: ${paths.output_dir}/checkpoints
   filename: "epoch_{epoch:03d}"
-  monitor: "val/acc"  # TODO: change this to your validation metric
+  monitor: "val/auc"  # TODO: change this to your validation metric
   mode: "max"
   save_last: True
   auto_insert_metric_name: False
 
 early_stopping:
-  monitor: "val/acc"  # TODO: change this to your validation metric
+  monitor: "val/auc"  # TODO: change this to your validation metric
   patience: 500
   mode: "max"
 

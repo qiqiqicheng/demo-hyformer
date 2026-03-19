@@ -1,4 +1,3 @@
-import ast
 import os
 from typing import Any, Optional
 
@@ -21,7 +20,7 @@ from demo_hyformer.utils import (
 
 log = RankedLogger(__name__, rank_zero_only=True)
 
-OmegaConf.register_new_resolver("eval", ast.literal_eval)
+OmegaConf.register_new_resolver("eval", lambda expr: eval(expr, {"__builtins__": {}}, {}))
 torch.multiprocessing.set_sharing_strategy("file_system")
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 
