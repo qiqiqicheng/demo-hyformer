@@ -1,0 +1,54 @@
+_target_: demo_hyformer.models.hyformer.HyFormerModule
+
+embed_dim: 36
+
+model:
+  _target_: demo_hyformer.models.hyformer.HyFormer
+  num_global_tokens: 8
+  num_nonseq_tokens: 10
+  d_model: ${model.embed_dim}
+  max_seq_len: ${data.max_seq_len}
+  max_delta_tt_bucket: ${data.max_delta_tt_bucket}
+  num_blocks: 2
+  ffn_hidden_dim: 48
+  num_heads: 2
+  num_seq: 3
+  drop_out: 0.1
+
+  semantic_groups_fn:
+    _target_: demo_hyformer.dataset.get_semantic_groups
+    _partial_: True
+    mode: null
+
+  kv_encoder:
+    _target_: demo_hyformer.models.kv_encoder.HSTUSeqKVEncoder
+    _partial_: True
+    d_model: ${model.model.d_model}
+    num_heads: ${model.model.num_heads}
+    num_seq: ${model.model.num_seq}
+    num_layers: 2
+    ffn_hidden_ratio: 2.0
+    drop_out: 0.1
+    max_seq_len: ${model.model.max_seq_len}
+    pos_bias_type: "rope"
+    rel_pos_buckets: 32
+    use_time_embedding: true
+    num_time_buckets: 32
+    time_bucket_fn: "log"
+
+optimizer:
+  _target_: torch.optim.AdamW
+  _partial_: true
+  lr: 0.0005
+  betas: [ 0.9, 0.95 ]
+  eps: 1e-8
+  weight_decay: 0.01
+
+scheduler:
+  _target_: torch.optim.lr_scheduler.CosineAnnealingWarmRestarts
+  _partial_: true
+  T_0: 5
+  T_mult: 2
+  eta_min: 1e-6
+
+val_at_k_list: [1, 5, 10]

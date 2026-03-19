@@ -1,0 +1,15 @@
+# @package _global_
+
+# overfits to 1 batch to ensure the minimum viable test wrapper runs flawlessly
+
+defaults:
+- default
+
+trainer:
+  max_epochs: 10
+  overfit_batches: 1
+  check_val_every_n_epoch: 1
+  enable_progress_bar: true
+
+# model ckpt and early stopping need to be disabled during overfitting
+callbacks: null

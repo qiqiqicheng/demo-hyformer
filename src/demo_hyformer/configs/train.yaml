@@ -1,0 +1,34 @@
+# @package _global_
+
+defaults:
+  - _self_
+  - data: demo
+  - model: hyformer
+  - callbacks: default
+  - logger: csv
+  - trainer: default
+  - paths: default
+  - extras: default
+  - hydra: default
+
+  - experiment: null
+
+  - hparams_search: null
+
+  - optional local: default
+
+  - debug: null
+
+task_name: "train"
+
+tags: ["dev"]
+
+train: True
+
+test: False
+
+ckpt_path: null
+
+seed: 728
+
+# optimized_metric: "val/mrr"  # TODO: change this to your validation metric, used for hyperparameter optimization
