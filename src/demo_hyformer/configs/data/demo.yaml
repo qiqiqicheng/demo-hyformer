@@ -1,6 +1,6 @@
 _target_: demo_hyformer.dataset.DemoDataModule
 batch_size: 32
-max_seq_len: 10
+max_seq_len: 100
 max_delta_tt_bucket: 15
 val_ratio: 0.1
-data_path: ${paths.root_dir}/data/processed/prepared_train.parquet
+data_path: ${paths.root_dir}/data/processed/prepared_data.parquet

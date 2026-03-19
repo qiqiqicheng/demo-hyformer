@@ -11,7 +11,7 @@ ROOT_DIR = Path(__file__).parent.parent.parent
 DATA_DIR = ROOT_DIR / "data"
 RAW_PATH = DATA_DIR / "raw" / "sample_data.parquet"
 PROCESSED_DIR = DATA_DIR / "processed"
-PREPARED_PATH = PROCESSED_DIR / "prepared_train.parquet"
+PREPARED_PATH = PROCESSED_DIR / "prepared_data.parquet"
 ITEM_STATS_PATH = PROCESSED_DIR / "item_stats.parquet"
 FEATURE_META_PATH = PROCESSED_DIR / "feature_meta.json"
 SUMMARY_PATH = PROCESSED_DIR / "summary.json"
@@ -222,9 +222,7 @@ def build_feature_meta(df: pd.DataFrame) -> dict:
         "user_feature": {
             "sparse": {int(fid): int(vocab_size) for fid, vocab_size in user_sparse_max.items()},
             "multihot": {int(fid): int(vocab_size) for fid, vocab_size in user_multihot_max.items()},
-            "weighted_multihot": {
-                int(fid): int(vocab_size) for fid, vocab_size in user_weighted_multihot_max.items()
-            },
+            "weighted_multihot": {int(fid): int(vocab_size) for fid, vocab_size in user_weighted_multihot_max.items()},
             "embedding": {int(fid): int(dim) for fid, dim in user_embedding_dim.items()},
         },
         "seq_feature": {
@@ -249,7 +247,9 @@ def build_summary(df: pd.DataFrame, item_stats: pd.DataFrame) -> dict:
     }
 
 
-def build_prepared_data(df: pd.DataFrame, feature_meta: dict, max_seq_len: int, max_delta_tt_bucket: int) -> pd.DataFrame:
+def build_prepared_data(
+    df: pd.DataFrame, feature_meta: dict, max_seq_len: int, max_delta_tt_bucket: int
+) -> pd.DataFrame:
     rows: list[dict] = []
 
     item_sparse_fids = tuple(sorted(feature_meta["item_feature"]["sparse"]))
@@ -336,9 +336,13 @@ def build_prepared_data(df: pd.DataFrame, feature_meta: dict, max_seq_len: int, 
             if int_value is not None:
                 row_dict[f"item_sparse_{fid}"] = int(int_value)
             elif int_array is not None and len(int_array) > 0:
-                row_dict[f"item_multihot_{fid}"] = _left_pad_truncate(np.asarray(int_array, dtype=np.int64), max_seq_len, np.int64)
+                row_dict[f"item_multihot_{fid}"] = _left_pad_truncate(
+                    np.asarray(int_array, dtype=np.int64), max_seq_len, np.int64
+                )
             elif float_value is not None:
-                row_dict[f"item_dense_bin_{fid}"] = _get_dense_bin(float(float_value), feature_meta["item_feature"]["dense"][fid])
+                row_dict[f"item_dense_bin_{fid}"] = _get_dense_bin(
+                    float(float_value), feature_meta["item_feature"]["dense"][fid]
+                )
             else:
                 raise ValueError(f"Empty feature array for item feature_id {fid}")
 
@@ -350,7 +354,9 @@ def build_prepared_data(df: pd.DataFrame, feature_meta: dict, max_seq_len: int, 
             if int_value is not None:
                 row_dict[f"user_sparse_{fid}"] = int(int_value)
             elif int_array is not None and float_array is None:
-                row_dict[f"user_multihot_{fid}"] = _left_pad_truncate(np.asarray(int_array, dtype=np.int64), max_seq_len, np.int64)
+                row_dict[f"user_multihot_{fid}"] = _left_pad_truncate(
+                    np.asarray(int_array, dtype=np.int64), max_seq_len, np.int64
+                )
             elif float_array is not None and int_array is None:
                 arr = np.asarray(float_array, dtype=np.float32)
                 if arr.shape[0] != user_embedding_dims[fid]:
@@ -375,8 +381,7 @@ def build_prepared_data(df: pd.DataFrame, feature_meta: dict, max_seq_len: int, 
         ):
             tt_fid = SEQ_TT_ID[seq_name]
             seq_entries = {
-                int(_entry_get(it, "feature_id")): _entry_get(it, "int_array")
-                for it in _seq_get(seq_feature, seq_name)
+                int(_entry_get(it, "feature_id")): _entry_get(it, "int_array") for it in _seq_get(seq_feature, seq_name)
             }
 
             tt_array = seq_entries.get(tt_fid)
@@ -434,7 +439,9 @@ def main():
     feature_meta = build_feature_meta(df)
     print("Built feature meta")
 
-    prepared = build_prepared_data(df, feature_meta=feature_meta, max_seq_len=max_seq_len, max_delta_tt_bucket=max_delta_tt_bucket)
+    prepared = build_prepared_data(
+        df, feature_meta=feature_meta, max_seq_len=max_seq_len, max_delta_tt_bucket=max_delta_tt_bucket
+    )
     print(f"Built prepared data with {len(prepared)} rows")
 
     summary = build_summary(prepared, item_stats)

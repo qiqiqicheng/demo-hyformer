@@ -1,17 +1,15 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
-from typing import Tuple, Optional
 import os
+from pathlib import Path
+from typing import Optional, Tuple
 
-from lightning.pytorch.utilities.types import TRAIN_DATALOADERS
+import lightning as L
 import numpy as np
 import pandas as pd
 import torch
-from torch.utils.data import Dataset
-import lightning as L
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 
 from demo_hyformer.basic import BaseFeature, DenseFeature, SequenceFeature, SparseFeature, WeightedMultiHotFeature
 from demo_hyformer.utils.pylogger import RankedLogger
@@ -271,9 +269,9 @@ class DemoDataset(Dataset):
         return t
 
     def _infer_nonseq_list_max_lens(self) -> tuple[dict[int, int], dict[int, int], dict[int, int]]:
-        item_multihot_max_lens = {fid: 1 for fid in self._item_multihot_fids}
-        user_multihot_max_lens = {fid: 1 for fid in self._user_multihot_fids}
-        user_weighted_max_lens = {fid: 1 for fid in self._user_weighted_fids}
+        item_multihot_max_lens = dict.fromkeys(self._item_multihot_fids, 1)
+        user_multihot_max_lens = dict.fromkeys(self._user_multihot_fids, 1)
+        user_weighted_max_lens = dict.fromkeys(self._user_weighted_fids, 1)
 
         for item_features in self.df["item_feature"].values:
             for e in item_features:

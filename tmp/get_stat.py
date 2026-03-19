@@ -123,13 +123,9 @@ def _count_actions(label_arr: Any) -> tuple[int, int]:
 def build_item_global_stats(df: pd.DataFrame) -> pd.DataFrame:
     """Build item-level global stats for downstream training usage."""
     action_counts = df["label"].apply(_count_actions)
-    cnt_df = pd.DataFrame(
-        action_counts.tolist(), columns=["impression_count", "click_count"]
-    )
+    cnt_df = pd.DataFrame(action_counts.tolist(), columns=["impression_count", "click_count"])
 
-    work = pd.concat(
-        [df[["item_id", "timestamp"]].reset_index(drop=True), cnt_df], axis=1
-    )
+    work = pd.concat([df[["item_id", "timestamp"]].reset_index(drop=True), cnt_df], axis=1)
 
     item_stats = (
         work.groupby("item_id", as_index=False)
@@ -157,9 +153,7 @@ def build_prepared_data(df: pd.DataFrame) -> pd.DataFrame:
 
     # Keep row-level click label for simple training usage.
     prepared["is_click"] = prepared["label"].apply(
-        lambda arr: int(
-            any(int(e.get("action_type")) == CLICK_ACTION for e in (arr or []))
-        )
+        lambda arr: int(any(int(e.get("action_type")) == CLICK_ACTION for e in (arr or [])))
     )
     prepared["action_time"] = prepared["label"].apply(
         lambda arr: max((int(e.get("action_time", 0)) for e in (arr or [])), default=0)
@@ -212,9 +206,7 @@ def build_feature_meta(df: pd.DataFrame) -> dict[str, Any]:
                 item_dense[fid] = {"type": "float_value"}
                 item_dense_values[fid].append(_to_float(float_value, default=0.0))
             elif int_array.size > 0:
-                item_multihot_max[fid] = max(
-                    item_multihot_max[fid], int(int_array.max())
-                )
+                item_multihot_max[fid] = max(item_multihot_max[fid], int(int_array.max()))
 
         # user_feature
         for e in _iter_entries(getattr(row, "user_feature", None)):
@@ -228,17 +220,11 @@ def build_feature_meta(df: pd.DataFrame) -> dict[str, Any]:
             if int_value is not None and int_array.size == 0 and float_array.size == 0:
                 user_sparse_max[fid] = max(user_sparse_max[fid], _to_int(int_value, 0))
             elif int_array.size > 0 and float_array.size > 0:
-                user_weighted_multihot_max[fid] = max(
-                    user_weighted_multihot_max[fid], int(int_array.max())
-                )
+                user_weighted_multihot_max[fid] = max(user_weighted_multihot_max[fid], int(int_array.max()))
             elif int_array.size > 0:
-                user_multihot_max[fid] = max(
-                    user_multihot_max[fid], int(int_array.max())
-                )
+                user_multihot_max[fid] = max(user_multihot_max[fid], int(int_array.max()))
             elif float_array.size > 0:
-                user_embedding_dims[fid] = max(
-                    user_embedding_dims[fid], int(float_array.shape[0])
-                )
+                user_embedding_dims[fid] = max(user_embedding_dims[fid], int(float_array.shape[0]))
 
         # seq_feature
         seq_feature = getattr(row, "seq_feature", None)
@@ -252,9 +238,7 @@ def build_feature_meta(df: pd.DataFrame) -> dict[str, Any]:
                 seq_feature_ids[seq_name].add(fid)
                 seq_lens[seq_name].append(int(arr.shape[0]))
                 if arr.size > 0:
-                    seq_max_vals[seq_name][fid] = max(
-                        seq_max_vals[seq_name][fid], int(arr.max())
-                    )
+                    seq_max_vals[seq_name][fid] = max(seq_max_vals[seq_name][fid], int(arr.max()))
 
     def _stats(values: list[int]) -> dict[str, float | int]:
         if len(values) == 0:
@@ -310,32 +294,18 @@ def build_feature_meta(df: pd.DataFrame) -> dict[str, Any]:
 
     feature_meta = {
         "item_feature": {
-            "sparse": {
-                int(fid): {"vocab_size": int(max_v) + 1}
-                for fid, max_v in sorted(item_sparse_max.items())
-            },
+            "sparse": {int(fid): {"vocab_size": int(max_v) + 1} for fid, max_v in sorted(item_sparse_max.items())},
             "dense": {int(fid): meta for fid, meta in sorted(item_dense.items())},
-            "multihot": {
-                int(fid): {"vocab_size": int(max_v) + 1}
-                for fid, max_v in sorted(item_multihot_max.items())
-            },
+            "multihot": {int(fid): {"vocab_size": int(max_v) + 1} for fid, max_v in sorted(item_multihot_max.items())},
         },
         "user_feature": {
-            "sparse": {
-                int(fid): {"vocab_size": int(max_v) + 1}
-                for fid, max_v in sorted(user_sparse_max.items())
-            },
-            "multihot": {
-                int(fid): {"vocab_size": int(max_v) + 1}
-                for fid, max_v in sorted(user_multihot_max.items())
-            },
+            "sparse": {int(fid): {"vocab_size": int(max_v) + 1} for fid, max_v in sorted(user_sparse_max.items())},
+            "multihot": {int(fid): {"vocab_size": int(max_v) + 1} for fid, max_v in sorted(user_multihot_max.items())},
             "embedding": {
-                int(fid): {"type": "float_array", "dim": int(dim)}
-                for fid, dim in sorted(user_embedding_dims.items())
+                int(fid): {"type": "float_array", "dim": int(dim)} for fid, dim in sorted(user_embedding_dims.items())
             },
             "weighted_multihot": {
-                int(fid): {"vocab_size": int(max_v) + 1}
-                for fid, max_v in sorted(user_weighted_multihot_max.items())
+                int(fid): {"vocab_size": int(max_v) + 1} for fid, max_v in sorted(user_weighted_multihot_max.items())
             },
         },
         "seq_feature": {
@@ -343,10 +313,7 @@ def build_feature_meta(df: pd.DataFrame) -> dict[str, Any]:
                 "feature_ids": sorted(int(fid) for fid in seq_feature_ids[seq_name]),
                 "value_type": "int_array",
                 "seq_len_stats": _stats(seq_lens[seq_name]),
-                "max_vals": {
-                    int(fid): int(max_v)
-                    for fid, max_v in sorted(seq_max_vals[seq_name].items())
-                },
+                "max_vals": {int(fid): int(max_v) for fid, max_v in sorted(seq_max_vals[seq_name].items())},
             }
             for seq_name in ("action_seq", "content_seq", "item_seq")
         },
@@ -357,7 +324,6 @@ def build_feature_meta(df: pd.DataFrame) -> dict[str, Any]:
         },
     }
     return feature_meta
-
 
 
 def main() -> None:
@@ -387,13 +353,10 @@ def main() -> None:
         "n_items": int(df["item_id"].nunique()),
         "n_users_raw": int(df["user_id"].nunique()),
         # "n_users_int_non_null": int(prepared["user_id"].notna().sum()),
-        "global_impression_actions": int(
-            sum(_count_actions(arr)[0] for arr in df["label"])
-        ),
+        "global_impression_actions": int(sum(_count_actions(arr)[0] for arr in df["label"])),
         "global_click_actions": int(sum(_count_actions(arr)[1] for arr in df["label"])),
         "global_ctr": float(
-            item_stats["click_count"].sum()
-            / (item_stats["impression_count"].sum() + item_stats["click_count"].sum())
+            item_stats["click_count"].sum() / (item_stats["impression_count"].sum() + item_stats["click_count"].sum())
         ),
         "output_files": {
             # "prepared_data_parquet": str(prepared_parquet),

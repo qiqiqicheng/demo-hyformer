@@ -1,6 +1,6 @@
 _target_: demo_hyformer.models.hyformer.HyFormerModule
 
-embed_dim: 36
+embed_dim: 128
 
 model:
   _target_: demo_hyformer.models.hyformer.HyFormer
@@ -9,9 +9,9 @@ model:
   d_model: ${model.embed_dim}
   max_seq_len: ${data.max_seq_len}
   max_delta_tt_bucket: ${data.max_delta_tt_bucket}
-  num_blocks: 2
-  ffn_hidden_dim: 48
-  num_heads: 2
+  num_blocks: 5
+  ffn_hidden_dim: 512
+  num_heads: 4
   num_seq: 3
   drop_out: 0.1
 

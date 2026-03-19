@@ -274,7 +274,7 @@ class EmbeddingLayer(nn.Module):
                 wm_emb = self.embed_dict[emb_name](ids)
                 pooled = _pool_weighted(wm_emb, ids, weights, f)
                 embs.append(pooled.unsqueeze(1))  # [B, 1, D_pooling] after pooling
-                
+
             elif isinstance(f, DenseFeature):
                 dense_input = x[f.name].float()
                 if dense_input.dim() == 2 and dense_input.size(1) == f.input_dim:

@@ -34,9 +34,7 @@ def _load_feature_meta(path: Path) -> dict:
         meta = json.load(f)
 
     item_sparse = meta["item_feature"]["sparse"]
-    meta["item_feature"]["sparse"] = {
-        (int(k) if k != "item_id" else k): v for k, v in item_sparse.items()
-    }
+    meta["item_feature"]["sparse"] = {(int(k) if k != "item_id" else k): v for k, v in item_sparse.items()}
 
     for group in ("multihot", "dense"):
         meta["item_feature"][group] = {int(k): v for k, v in meta["item_feature"][group].items()}
@@ -51,7 +49,7 @@ def _load_feature_meta(path: Path) -> dict:
 
 
 FEATURE_META = _load_feature_meta(DATA_DIR / "processed" / "feature_meta.json")
-SUMMARY = json.load(open(DATA_DIR / "processed" / "summary.json", "r"))
+SUMMARY = json.load(open(DATA_DIR / "processed" / "summary.json"))
 
 
 class DemoDataset(Dataset):
@@ -61,7 +59,9 @@ class DemoDataset(Dataset):
         self.length = len(columns["timestamp"])
 
         self.item_sparse_fids = tuple(
-            fid for fid in sorted(FEATURE_META["item_feature"]["sparse"], key=lambda x: (isinstance(x, str), x)) if fid != "item_id"
+            fid
+            for fid in sorted(FEATURE_META["item_feature"]["sparse"], key=lambda x: (isinstance(x, str), x))
+            if fid != "item_id"
         )
         self.item_dense_fids = tuple(sorted(FEATURE_META["item_feature"]["dense"]))
         self.item_multihot_fids = tuple(sorted(FEATURE_META["item_feature"]["multihot"]))
@@ -244,7 +244,9 @@ def get_features(
     item_seq_features = []
 
     non_seq_sparse_features.extend([
-        SparseFeature(name="item_id", vocab_size=FEATURE_META["item_feature"]["sparse"]['item_id'] + 1, embed_dim=emb_dim),
+        SparseFeature(
+            name="item_id", vocab_size=FEATURE_META["item_feature"]["sparse"]["item_id"] + 1, embed_dim=emb_dim
+        ),
         SparseFeature(name="action_tt_hour", vocab_size=25, embed_dim=emb_dim),
         SparseFeature(name="action_tt_dow", vocab_size=8, embed_dim=emb_dim),
         SparseFeature(name="delta_tt_bucket", vocab_size=max_delta_tt_bucket + 1, embed_dim=emb_dim),
@@ -302,9 +304,7 @@ def get_features(
         )
 
     for fid, dim in FEATURE_META["user_feature"]["embedding"].items():
-        non_seq_embedding_features.append(
-            DenseFeature(name=f"user_embedding_{fid}", input_dim=dim, embed_dim=emb_dim)
-        )
+        non_seq_embedding_features.append(DenseFeature(name=f"user_embedding_{fid}", input_dim=dim, embed_dim=emb_dim))
 
     for fid, vocab_size in FEATURE_META["seq_feature"]["action_seq"].items():
         if fid == SEQ_TT_ID["action_seq"]:
@@ -313,8 +313,12 @@ def get_features(
             SequenceFeature(name=f"action_seq_{fid}", vocab_size=vocab_size + 1, embed_dim=emb_dim, pooling="concat")
         )
     action_seq_features.extend([
-        SequenceFeature(name="action_seq_hour", vocab_size=25, embed_dim=emb_dim, pooling="concat", shared_with="action_tt_hour"),
-        SequenceFeature(name="action_seq_dow", vocab_size=8, embed_dim=emb_dim, pooling="concat", shared_with="action_tt_dow"),
+        SequenceFeature(
+            name="action_seq_hour", vocab_size=25, embed_dim=emb_dim, pooling="concat", shared_with="action_tt_hour"
+        ),
+        SequenceFeature(
+            name="action_seq_dow", vocab_size=8, embed_dim=emb_dim, pooling="concat", shared_with="action_tt_dow"
+        ),
     ])
 
     for fid, vocab_size in FEATURE_META["seq_feature"]["content_seq"].items():
@@ -324,8 +328,12 @@ def get_features(
             SequenceFeature(name=f"content_seq_{fid}", vocab_size=vocab_size + 1, embed_dim=emb_dim, pooling="concat")
         )
     content_seq_features.extend([
-        SequenceFeature(name="content_seq_hour", vocab_size=25, embed_dim=emb_dim, pooling="concat", shared_with="action_tt_hour"),
-        SequenceFeature(name="content_seq_dow", vocab_size=8, embed_dim=emb_dim, pooling="concat", shared_with="action_tt_dow"),
+        SequenceFeature(
+            name="content_seq_hour", vocab_size=25, embed_dim=emb_dim, pooling="concat", shared_with="action_tt_hour"
+        ),
+        SequenceFeature(
+            name="content_seq_dow", vocab_size=8, embed_dim=emb_dim, pooling="concat", shared_with="action_tt_dow"
+        ),
     ])
 
     for fid, vocab_size in FEATURE_META["seq_feature"]["item_seq"].items():
@@ -335,8 +343,12 @@ def get_features(
             SequenceFeature(name=f"item_seq_{fid}", vocab_size=vocab_size + 1, embed_dim=emb_dim, pooling="concat")
         )
     item_seq_features.extend([
-        SequenceFeature(name="item_seq_hour", vocab_size=25, embed_dim=emb_dim, pooling="concat", shared_with="action_tt_hour"),
-        SequenceFeature(name="item_seq_dow", vocab_size=8, embed_dim=emb_dim, pooling="concat", shared_with="action_tt_dow"),
+        SequenceFeature(
+            name="item_seq_hour", vocab_size=25, embed_dim=emb_dim, pooling="concat", shared_with="action_tt_hour"
+        ),
+        SequenceFeature(
+            name="item_seq_dow", vocab_size=8, embed_dim=emb_dim, pooling="concat", shared_with="action_tt_dow"
+        ),
     ])
 
     return (
@@ -372,7 +384,9 @@ def get_semantic_groups(mode: int | None = None):
         raise ValueError(f"Unsupported semantic group mode: {mode} with type: {type(mode)}")
     return semantic_groups
 
+
 if __name__ == "__main__":
+
     def _to_serializable(obj):
         if isinstance(obj, torch.Tensor):
             return obj.detach().cpu().tolist()
@@ -387,21 +401,23 @@ if __name__ == "__main__":
         if isinstance(obj, (np.floating,)):
             return float(obj)
         return obj
-    
+
     data_module = DemoDataModule(batch_size=4, max_seq_len=10, max_delta_tt_bucket=100)
     data_module.setup("fit")
     train_loader = data_module.train_dataloader()
     batch = next(iter(train_loader))
-    
+
     with (DATA_DIR / "processed" / "sample_batch.json").open("w", encoding="utf-8") as f:
         json.dump(_to_serializable(batch), f, indent=2)
-        
-    (non_seq_sparse_features,
-     non_seq_multi_features,
-     non_seq_embedding_features,
-     action_seq_features,
-     item_seq_features,
-     content_seq_features) = get_features(emb_dim=16, max_delta_tt_bucket=100)
+
+    (
+        non_seq_sparse_features,
+        non_seq_multi_features,
+        non_seq_embedding_features,
+        action_seq_features,
+        item_seq_features,
+        content_seq_features,
+    ) = get_features(emb_dim=16, max_delta_tt_bucket=100)
 
     get_features_dict = {
         "non_seq_sparse_features": [f.__repr__() for f in non_seq_sparse_features],
@@ -413,5 +429,3 @@ if __name__ == "__main__":
     }
     with (DATA_DIR / "processed" / "get_features.json").open("w", encoding="utf-8") as f:
         json.dump(get_features_dict, f, ensure_ascii=False, indent=2)
-
-    

@@ -6,9 +6,7 @@
 # overwrite task name so debugging logs are stored in separate folder
 task_name: "debug"
 
-# disable callbacks and loggers during debugging
 callbacks: null
-logger: null
 
 extras:
   ignore_warnings: False
@@ -30,5 +28,45 @@ trainer:
   devices: 1 # debuggers don't like multiprocessing
   detect_anomaly: true # raise exception if NaN or +/-inf is detected in any tensor
 
-# data:
-  # num_workers: 0 # debuggers don't like multiprocessing
+data:
+  batch_size: 32
+  max_seq_len: 10
+
+model:
+  embed_dim: 36
+  model:
+    num_global_tokens: 8
+    num_nonseq_tokens: 10
+    num_blocks: 2
+    ffn_hidden_dim: 48
+    num_heads: 2
+    num_seq: 3
+    drop_out: 0.1
+
+    semantic_groups_fn:
+      mode: null
+
+    kv_encoder:
+      num_layers: 2
+      ffn_hidden_ratio: 2.0
+      drop_out: 0.1
+      pos_bias_type: "rope"
+      rel_pos_buckets: 32
+      use_time_embedding: true
+      num_time_buckets: 32
+      time_bucket_fn: "log"
+
+  optimizer:
+    _target_: torch.optim.AdamW
+    _partial_: true
+    lr: 0.0005
+    betas: [ 0.9, 0.95 ]
+    eps: 1e-8
+    weight_decay: 0.01
+
+  scheduler:
+    _target_: torch.optim.lr_scheduler.CosineAnnealingWarmRestarts
+    _partial_: true
+    T_0: 5
+    T_mult: 2
+    eta_min: 1e-6

@@ -11,16 +11,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from demo_hyformer.basic import (
-    BaseFeature,
     CTRMetrics,
-    DenseFeature,
     EmbeddingLayer,
-    SequenceFeature,
-    SparseFeature,
-    WeightedMultiHotFeature,
 )
+from demo_hyformer.dataset import get_features
 from demo_hyformer.utils.pylogger import RankedLogger
-from demo_hyformer.dataset import DemoDataModule, DemoDataset, get_features
 
 log = RankedLogger(__name__)
 
@@ -209,10 +204,10 @@ class HyFormer(nn.Module):
                 seq_time_diffs: [B, S, T] or None
         """
         # non_seq feature
-        non_seq_sparse_emb = self.embedding_layer(x['non_seq'], self.non_seq_sparse_features)  # [B, M1, D]
-        non_seq_multi_emb = self.embedding_layer(x['non_seq'], self.non_seq_multi_features)  # [B, M2, D_multi]
+        non_seq_sparse_emb = self.embedding_layer(x["non_seq"], self.non_seq_sparse_features)  # [B, M1, D]
+        non_seq_multi_emb = self.embedding_layer(x["non_seq"], self.non_seq_multi_features)  # [B, M2, D_multi]
         non_seq_embedding_embs = [
-            self.embedding_layer(x['non_seq'], self.non_seq_embedding_features[i])
+            self.embedding_layer(x["non_seq"], self.non_seq_embedding_features[i])
             for i in range(len(self.non_seq_embedding_features))
         ]  # list of [B, 1, D_in]
 
@@ -239,22 +234,19 @@ class HyFormer(nn.Module):
 
         # seq feature
         action_seq_emb = (
-            self
-            .embedding_layer(x['action_seq'], self.action_seq_features)  # [B, M_action, T * D]
+            self.embedding_layer(x["action_seq"], self.action_seq_features)  # [B, M_action, T * D]
             .view(-1, len(self.action_seq_features), self.max_seq_len, self.d_model)  # [B, M_action, T, D]
             .permute(0, 2, 1, 3)  # [B, T, M_action, D]
             .reshape(-1, self.max_seq_len, len(self.action_seq_features) * self.d_model)  # [B, T, M_action*D]
         )
         content_seq_emb = (
-            self
-            .embedding_layer(x['content_seq'], self.content_seq_features)  # [B, M_content, T * D]
+            self.embedding_layer(x["content_seq"], self.content_seq_features)  # [B, M_content, T * D]
             .view(-1, len(self.content_seq_features), self.max_seq_len, self.d_model)  # [B, M_content, T, D]
             .permute(0, 2, 1, 3)  # [B, T, M_content, D]
             .reshape(-1, self.max_seq_len, len(self.content_seq_features) * self.d_model)  # [B, T, M_content*D]
         )
         item_seq_emb = (
-            self
-            .embedding_layer(x['item_seq'], self.item_seq_features)  # [B, M_item, T * D]
+            self.embedding_layer(x["item_seq"], self.item_seq_features)  # [B, M_item, T * D]
             .view(-1, len(self.item_seq_features), self.max_seq_len, self.d_model)  # [B, M_item, T, D]
             .permute(0, 2, 1, 3)  # [B, T, M_item, D]
             .reshape(-1, self.max_seq_len, len(self.item_seq_features) * self.d_model)  # [B, T, M_item*D]
@@ -506,8 +498,7 @@ class HyFormerBlock(nn.Module):
         Q_ = self.boost_input_norm(Q_)
         sub_dim = D // T
         Q_hat = (
-            Q_
-            .view(B, S, T, T, sub_dim)  # [B, S, T, T, D/T]
+            Q_.view(B, S, T, T, sub_dim)  # [B, S, T, T, D/T]
             .transpose(2, 3)  # [B, S, T, T, D/T]
             .contiguous()
             .view(B, S, T, D)  # [B, S, T, D]
@@ -597,7 +588,7 @@ class HyFormerModule(L.LightningModule):
         for name, value in metrics.items():
             self.log(f"val/{name}", value, prog_bar=(name in {"auc", "logloss"}))
         self.val_metrics.reset()
-        
+
     def test_step(self, batch, batch_idx):
         _ = batch_idx
         _ = self._compute_loss(batch, stage="val")
@@ -667,7 +658,7 @@ if __name__ == "__main__":
         num_heads = 4
         num_blocks = 2
 
-        print(f"\n[Test Config]")
+        print("\n[Test Config]")
         print(f"  device: {device}")
         print(f"  batch_size: {batch_size}")
         print(f"  max_seq_len: {max_seq_len}")
@@ -695,7 +686,7 @@ if __name__ == "__main__":
         ).to(device)
 
         # Test QueryGeneration
-        print(f"\n[Testing QueryGeneration]")
+        print("\n[Testing QueryGeneration]")
         query_gen = QueryGeneration(
             num_global_tokens=num_global_tokens,
             num_nonseq_tokens=num_nonseq_tokens,
@@ -713,13 +704,13 @@ if __name__ == "__main__":
             assert global_tokens.shape == (batch_size, num_seq, num_global_tokens, d_model)
             print(f"  ✓ QueryGeneration output shape: {global_tokens.shape}")
             assert torch.isfinite(global_tokens).all()
-            print(f"  ✓ All values are finite")
+            print("  ✓ All values are finite")
         except Exception as e:
             print(f"  ✗ QueryGeneration failed: {e}")
             raise
 
         # Test HyFormerBlock
-        print(f"\n[Testing HyFormerBlock]")
+        print("\n[Testing HyFormerBlock]")
         block = HyFormerBlock(
             d_model=d_model,
             num_heads=num_heads,
@@ -746,20 +737,20 @@ if __name__ == "__main__":
             assert next_global.shape == global_tokens.shape
             assert next_nonseq.shape == (batch_size, num_seq, num_nonseq_tokens, d_model)
             assert next_seq.shape == seq_x.shape
-            print(f"  ✓ Block output shapes correct")
+            print("  ✓ Block output shapes correct")
             print(f"    global_tokens: {next_global.shape}")
             print(f"    nonseq_tokens: {next_nonseq.shape}")
             print(f"    seq_tokens: {next_seq.shape}")
             assert torch.isfinite(next_global).all()
             assert torch.isfinite(next_nonseq).all()
             assert torch.isfinite(next_seq).all()
-            print(f"  ✓ All values are finite")
+            print("  ✓ All values are finite")
         except Exception as e:
             print(f"  ✗ HyFormerBlock failed: {e}")
             raise
 
         # Test multiple blocks
-        print(f"\n[Testing Multiple HyFormerBlocks]")
+        print("\n[Testing Multiple HyFormerBlocks]")
         blocks = nn.ModuleList([
             HyFormerBlock(
                 d_model=d_model,
@@ -790,13 +781,13 @@ if __name__ == "__main__":
             assert torch.isfinite(curr_global).all()
             assert torch.isfinite(curr_nonseq).all()
             assert torch.isfinite(curr_seq).all()
-            print(f"  ✓ All final values are finite")
+            print("  ✓ All final values are finite")
         except Exception as e:
             print(f"  ✗ Multiple blocks failed: {e}")
             raise
 
         # Test MLP head
-        print(f"\n[Testing MLP Head]")
+        print("\n[Testing MLP Head]")
         in_dim = num_seq * (num_global_tokens + num_nonseq_tokens) * d_model
         mlp_head = nn.Sequential(
             nn.Linear(in_dim, 256),
@@ -823,7 +814,7 @@ if __name__ == "__main__":
             assert output.shape == (batch_size, 1)
             print(f"  ✓ MLP output shape: {output.shape}")
             assert torch.isfinite(output).all()
-            print(f"  ✓ All output values are finite")
+            print("  ✓ All output values are finite")
             print(f"  Output range: [{output.min().item():.4f}, {output.max().item():.4f}]")
             print(f"  Output mean: {output.mean().item():.4f}")
         except Exception as e:
@@ -831,7 +822,7 @@ if __name__ == "__main__":
             raise
 
         # Test backward pass
-        print(f"\n[Testing Backward Pass]")
+        print("\n[Testing Backward Pass]")
         try:
             mlp_head.train()
             blocks.train()
@@ -851,7 +842,7 @@ if __name__ == "__main__":
             loss = output.mean()
             loss.backward()
 
-            print(f"  ✓ Backward pass successful")
+            print("  ✓ Backward pass successful")
 
             # Count parameters with grad
             all_params = sum(p.numel() for p in mlp_head.parameters() if p.requires_grad)
@@ -867,9 +858,9 @@ if __name__ == "__main__":
             print(f"  ✗ Backward pass failed: {e}")
             raise
 
-        print(f"\n" + "=" * 80)
-        print(f"All tests passed! ✓")
-        print(f"=" * 80)
+        print("\n" + "=" * 80)
+        print("All tests passed! ✓")
+        print("=" * 80)
 
     def test_dataset_and_collate():
         """
@@ -888,7 +879,7 @@ if __name__ == "__main__":
         max_seq_len = 12
         d_model = 32
 
-        print(f"\n[Creating Mock Sample Data]")
+        print("\n[Creating Mock Sample Data]")
         print(f"  max_seq_len: {max_seq_len}")
 
         # Create a single mock sample matching DemoDataset.__getitem__ format
@@ -947,7 +938,7 @@ if __name__ == "__main__":
         print(f"  ✓ Created {batch_size} mock samples")
 
         # Test 1: Check individual sample structure
-        print(f"\n[Testing Individual Sample Structure]")
+        print("\n[Testing Individual Sample Structure]")
         sample = samples[0]
         try:
             assert isinstance(sample, dict), "Sample must be dict"
@@ -965,7 +956,7 @@ if __name__ == "__main__":
             assert isinstance(sample["timestamp"], torch.Tensor), "timestamp must be tensor"
             assert isinstance(sample["label"], torch.Tensor), "label must be tensor"
 
-            print(f"  ✓ Individual sample structure valid")
+            print("  ✓ Individual sample structure valid")
             print(f"    Keys: {list(sample.keys())}")
 
         except AssertionError as e:
@@ -973,12 +964,12 @@ if __name__ == "__main__":
             return False
 
         # Test 2: Try default collate_fn
-        print(f"\n[Testing Default Collate Function]")
+        print("\n[Testing Default Collate Function]")
         from torch.utils.data.dataloader import default_collate
 
         try:
             batch = default_collate(samples)
-            print(f"  ✓ default_collate succeeded")
+            print("  ✓ default_collate succeeded")
             print(f"    Batch type: {type(batch)}")
             print(f"    Batch keys: {list(batch.keys()) if isinstance(batch, dict) else 'N/A'}")
 
@@ -993,22 +984,22 @@ if __name__ == "__main__":
                         print(f"      {key}: {type(value)}")
 
         except Exception as e:
-            print(f"  ✗ default_collate failed with error:")
+            print("  ✗ default_collate failed with error:")
             print(f"    {type(e).__name__}: {e}")
-            print(f"\n  ⚠ Issue Detected: default_collate cannot handle nested dicts with mixed tensor/dict values")
-            print(f"\n  Recommendation:")
-            print(f"    Create a custom collate_fn in _dataset.py to properly handle this structure:")
-            print(f"    ```python")
-            print(f"    def demo_collate_fn(batch):")
-            print(f"        # Handle nested dicts and tensors properly")
-            print(f"        # Should stack/cat tensors and keep dict structure")
-            print(f"        pass")
-            print(f"    ```")
-            print(f"    Then use it in DataLoader: DataLoader(..., collate_fn=demo_collate_fn)")
+            print("\n  ⚠ Issue Detected: default_collate cannot handle nested dicts with mixed tensor/dict values")
+            print("\n  Recommendation:")
+            print("    Create a custom collate_fn in _dataset.py to properly handle this structure:")
+            print("    ```python")
+            print("    def demo_collate_fn(batch):")
+            print("        # Handle nested dicts and tensors properly")
+            print("        # Should stack/cat tensors and keep dict structure")
+            print("        pass")
+            print("    ```")
+            print("    Then use it in DataLoader: DataLoader(..., collate_fn=demo_collate_fn)")
             return False
 
         # Test 3: Check data shapes after collate
-        print(f"\n[Testing Batch Data Shapes]")
+        print("\n[Testing Batch Data Shapes]")
         if isinstance(batch, dict):
             try:
                 # Check if we can access nested tensors
@@ -1029,21 +1020,21 @@ if __name__ == "__main__":
                             else:
                                 print(f"  ✗ seq_time_diffs.{key}: shape {actual_shape}, expected {expected_shape}")
 
-                print(f"  ✓ Batch structure accessible")
+                print("  ✓ Batch structure accessible")
 
             except Exception as e:
                 print(f"  ✗ Failed to inspect batch shapes: {e}")
                 return False
 
         # Test 4: Check HyFormer compatibility
-        print(f"\n[Testing HyFormer Input Compatibility]")
+        print("\n[Testing HyFormer Input Compatibility]")
         try:
             # Check if batch can be passed to HyFormer._get_embedding
             required_keys = {"non_seq", "action_seq", "content_seq", "item_seq", "seq_time_diffs"}
             batch_keys = set(batch.keys()) if isinstance(batch, dict) else set()
 
             if required_keys.issubset(batch_keys):
-                print(f"  ✓ Batch has all required keys for HyFormer")
+                print("  ✓ Batch has all required keys for HyFormer")
                 print(f"    Required: {required_keys}")
                 print(f"    Actual: {batch_keys}")
             else:
@@ -1059,7 +1050,7 @@ if __name__ == "__main__":
                 )
 
                 if expected_seq_keys.issubset(actual_seq_keys):
-                    print(f"  ✓ seq_time_diffs has all required sequence types")
+                    print("  ✓ seq_time_diffs has all required sequence types")
                 else:
                     missing_seq = expected_seq_keys - actual_seq_keys
                     print(f"  ✗ seq_time_diffs missing: {missing_seq}")
@@ -1069,9 +1060,9 @@ if __name__ == "__main__":
             print(f"  ✗ HyFormer compatibility check failed: {e}")
             return False
 
-        print(f"\n" + "=" * 80)
-        print(f"Dataset and Collate Function Tests Completed")
-        print(f"=" * 80)
+        print("\n" + "=" * 80)
+        print("Dataset and Collate Function Tests Completed")
+        print("=" * 80)
         return True
 
     def test_dataset_embedding_format():
@@ -1086,7 +1077,7 @@ if __name__ == "__main__":
         max_seq_len = 12
 
         # Create a mock batch similar to what DataLoader produces
-        print(f"\n[Creating Realistic Mock Batch]")
+        print("\n[Creating Realistic Mock Batch]")
 
         from torch.utils.data.dataloader import default_collate
 
@@ -1129,13 +1120,13 @@ if __name__ == "__main__":
         batch = default_collate(samples)
 
         # Test 1: Check weighted_multihot structure in batch
-        print(f"\n[Testing Weighted MultiHot Structure in Batch]")
+        print("\n[Testing Weighted MultiHot Structure in Batch]")
         try:
             wmhot_in_batch = batch["non_seq"].get("user_weighted_multihot_7")
             if wmhot_in_batch is None:
-                print(f"  ⚠ Warning: user_weighted_multihot_7 not in batch")
+                print("  ⚠ Warning: user_weighted_multihot_7 not in batch")
             elif isinstance(wmhot_in_batch, dict):
-                print(f"  ⚠ Issue Found: user_weighted_multihot_7 is a dict in batch")
+                print("  ⚠ Issue Found: user_weighted_multihot_7 is a dict in batch")
                 print(f"    Structure: {list(wmhot_in_batch.keys())}")
 
                 # Check inner structure
@@ -1145,17 +1136,17 @@ if __name__ == "__main__":
                 print(f"    ids shape: {ids_shape}")
                 print(f"    weights shape: {weights_shape}")
 
-                print(f"\n    ⚠ Potential Issue:")
+                print("\n    ⚠ Potential Issue:")
                 print("       EmbeddingLayer expects: {'user_weighted_multihot_7': Tensor}")
                 print("       But received: {'user_weighted_multihot_7': {'ids': Tensor, 'weights': Tensor}}")
-                print(f"\n    This will likely cause an error in EmbeddingLayer.__call__")
-                print(f"    when it tries to index embedding table with a dict instead of tensor.")
+                print("\n    This will likely cause an error in EmbeddingLayer.__call__")
+                print("    when it tries to index embedding table with a dict instead of tensor.")
 
                 # Check if this matches WeightedMultiHotFeature expectation
-                print(f"\n    Expected by WeightedMultiHotFeature:")
-                print(f"      Input: x['user_weighted_multihot_7'] should be a dict with 'ids' and 'weights'")
-                print(f"      Current batch structure: ✓ Matches")
-                print(f"    ✓ Batch structure is CORRECT for WeightedMultiHotFeature")
+                print("\n    Expected by WeightedMultiHotFeature:")
+                print("      Input: x['user_weighted_multihot_7'] should be a dict with 'ids' and 'weights'")
+                print("      Current batch structure: ✓ Matches")
+                print("    ✓ Batch structure is CORRECT for WeightedMultiHotFeature")
 
             elif isinstance(wmhot_in_batch, torch.Tensor):
                 print(f"  ✓ user_weighted_multihot_7 is a tensor of shape {wmhot_in_batch.shape}")
@@ -1164,14 +1155,14 @@ if __name__ == "__main__":
             print(f"  ✗ Error checking weighted_multihot: {e}")
 
         # Test 2: Data accessibility from HyFormer._get_embedding perspective
-        print(f"\n[Testing Data Access in _get_embedding]")
+        print("\n[Testing Data Access in _get_embedding]")
         try:
             # Simulate what happens in _get_embedding
             x = batch  # This is what gets passed to _get_embedding
 
             # Check if keys are accessible
             if "non_seq" in x:
-                print(f"  ✓ batch['non_seq'] exists")
+                print("  ✓ batch['non_seq'] exists")
                 for key in list(x["non_seq"].keys())[:5]:
                     val = x["non_seq"][key]
                     if isinstance(val, torch.Tensor):
@@ -1180,7 +1171,7 @@ if __name__ == "__main__":
                         print(f"    ⚠ batch['non_seq']['{key}']: dict {list(val.keys())}")
 
             if "seq_time_diffs" in x:
-                print(f"  ✓ batch['seq_time_diffs'] exists")
+                print("  ✓ batch['seq_time_diffs'] exists")
                 for seq_type in ["action_seq_time_diff", "content_seq_time_diff", "item_seq_time_diff"]:
                     if seq_type in x["seq_time_diffs"]:
                         shape = x["seq_time_diffs"][seq_type].shape
@@ -1192,7 +1183,7 @@ if __name__ == "__main__":
             print(f"  ✗ Error accessing batch data: {e}")
 
         # Test 3: Check seq_time_diffs stacking in HyFormer.forward
-        print(f"\n[Testing seq_time_diffs Stacking (as in HyFormer.forward)]")
+        print("\n[Testing seq_time_diffs Stacking (as in HyFormer.forward)]")
         try:
             # Simulate the stacking that happens in HyFormer._get_embedding
             stacked = torch.stack(
@@ -1208,23 +1199,23 @@ if __name__ == "__main__":
             actual_shape = stacked.shape
 
             if actual_shape == expected_shape:
-                print(f"  ✓ seq_time_diffs stacking correct")
+                print("  ✓ seq_time_diffs stacking correct")
                 print(f"    Expected: {expected_shape}")
                 print(f"    Actual: {actual_shape}")
             else:
-                print(f"  ✗ seq_time_diffs stacking shape mismatch")
+                print("  ✗ seq_time_diffs stacking shape mismatch")
                 print(f"    Expected: {expected_shape}")
                 print(f"    Actual: {actual_shape}")
-                print(f"\n    ⚠ Issue: Shape mismatch will cause error in HyFormerBlock forward")
+                print("\n    ⚠ Issue: Shape mismatch will cause error in HyFormerBlock forward")
 
         except Exception as e:
             print(f"  ✗ Error stacking seq_time_diffs: {type(e).__name__}: {e}")
             print(f"\n  ⚠ Issue Found: {e}")
-            print(f"     This will cause HyFormer.forward to fail when trying to pass seq_time_diffs")
+            print("     This will cause HyFormer.forward to fail when trying to pass seq_time_diffs")
 
-        print(f"\n" + "=" * 80)
-        print(f"Embedding Format Tests Completed")
-        print(f"=" * 80)
+        print("\n" + "=" * 80)
+        print("Embedding Format Tests Completed")
+        print("=" * 80)
         return True
 
     test_forward_simplified()

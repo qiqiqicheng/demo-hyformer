@@ -339,8 +339,7 @@ class HSTUSeqKVEncoder(nn.Module):
         pair_delta = torch.abs(pseudo_ts.unsqueeze(-1) - pseudo_ts.unsqueeze(-2))  # [B, S, T, T]
         pair_bucket = self._time_to_bucket(pair_delta)  # [B, S, T, T]
         pair_time_bias = (
-            self
-            .time_attn_bias(pair_bucket)  # [B, S, T, T, H]
+            self.time_attn_bias(pair_bucket)  # [B, S, T, T, H]
             .permute(0, 1, 4, 2, 3)  # [B, S, H, T, T]
             .to(dtype=dtype)
         )  # [B, S, H, T, T]
