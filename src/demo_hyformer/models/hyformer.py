@@ -365,7 +365,7 @@ class QueryGeneration(nn.Module):
         """
         B = non_seq_x.size(0)
 
-        valid_counts = seq_valid_mask.sum(dim=2, keepdim=True)
+        valid_counts = seq_valid_mask.sum(dim=2, keepdim=True).clamp_min(1)
         # log.debug(f"Valid counts: {valid_counts}")
         # if torch.any(valid_counts == 0):
         #     raise ValueError("Encountered all-padding sequence while generating queries")
@@ -483,9 +483,9 @@ class HyFormerBlock(nn.Module):
 
         head_dim = D // self.num_heads
 
-        Q_mha = Q.reshape(B, S, N, self.num_heads, head_dim).permute(0, 1, 3, 2, 4)  # [B, S, H, N, D/H]
-        K_mha = K.reshape(B, S, T, self.num_heads, head_dim).permute(0, 1, 3, 2, 4)  # [B, S, H, T, D/H]
-        V_mha = V.reshape(B, S, T, self.num_heads, head_dim).permute(0, 1, 3, 2, 4)  # [B, S, H, T, D/H]
+        Q_mha = Q.reshape(B, S, N, self.num_heads, head_dim).permute(0, 1, 3, 2, 4).contiguous()  # [B, S, H, N, D/H]
+        K_mha = K.reshape(B, S, T, self.num_heads, head_dim).permute(0, 1, 3, 2, 4).contiguous()  # [B, S, H, T, D/H]
+        V_mha = V.reshape(B, S, T, self.num_heads, head_dim).permute(0, 1, 3, 2, 4).contiguous()  # [B, S, H, T, D/H]
 
         attn_mask = seq_valid_mask.unsqueeze(2).unsqueeze(2).expand(-1, -1, self.num_heads, N, -1)
         attn_out = F.scaled_dot_product_attention(

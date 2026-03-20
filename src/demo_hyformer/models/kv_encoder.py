@@ -174,9 +174,9 @@ class HSTUKVLayer(nn.Module):
         qkv = torch.einsum("bstd,sdf->bstf", attn_input, self.qkv_w) + self.qkv_b.unsqueeze(0).unsqueeze(2)
         q, k, v = torch.split(qkv, D, dim=-1)
 
-        q = q.reshape(B, S, T, self.num_heads, head_dim).permute(0, 1, 3, 2, 4)
-        k = k.reshape(B, S, T, self.num_heads, head_dim).permute(0, 1, 3, 2, 4)
-        v = v.reshape(B, S, T, self.num_heads, head_dim).permute(0, 1, 3, 2, 4)
+        q = q.reshape(B, S, T, self.num_heads, head_dim).permute(0, 1, 3, 2, 4).contiguous()
+        k = k.reshape(B, S, T, self.num_heads, head_dim).permute(0, 1, 3, 2, 4).contiguous()
+        v = v.reshape(B, S, T, self.num_heads, head_dim).permute(0, 1, 3, 2, 4).contiguous()
 
         if rope is not None:
             q, k = rope(q, k)
@@ -377,6 +377,11 @@ class HSTUSeqKVEncoder(nn.Module):
             seq_valid_mask = torch.ones(B, S, T, device=seq_tokens.device, dtype=torch.bool)
         else:
             seq_valid_mask = seq_valid_mask.to(device=seq_tokens.device, dtype=torch.bool)
+
+        empty_seq = seq_valid_mask.sum(dim=-1, keepdim=True) == 0
+        if empty_seq.any():
+            seq_valid_mask = seq_valid_mask.clone()
+            seq_valid_mask[..., 0] = seq_valid_mask[..., 0] | empty_seq.squeeze(-1)
         # if torch.any(seq_valid_mask.sum(dim=-1) == 0):
         #     raise ValueError("Encountered all-padding sequence before KV encoding")
 
