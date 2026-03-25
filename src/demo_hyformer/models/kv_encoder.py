@@ -73,8 +73,11 @@ class RoPEPositionEncoding(nn.Module):
 
     @staticmethod
     def _rotate_half(x: torch.Tensor) -> torch.Tensor:
-        half = x.shape[-1] // 2
-        return torch.cat([-x[..., half:], x[..., :half]], dim=-1)
+        # x: [B, S, H, T, head_dim]
+        # rotary pair split: (even_idx, odd_idx)
+        x_even = x[..., 0::2]  # [B, S, H, T, head_dim/2]
+        x_odd = x[..., 1::2]  # [B, S, H, T, head_dim/2]
+        return torch.stack((-x_odd, x_even), dim=-1).flatten(-2)  # [B, S, H, T, head_dim]
 
     def forward(self, q: torch.Tensor, k: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Apply rotary embeddings to Q and K.
@@ -84,15 +87,37 @@ class RoPEPositionEncoding(nn.Module):
             k: [B, S, H, T, head_dim]
 
         Returns:
-            q_rot, k_rot: same shapes as inputs
+            q_rot, k_rot: [B, S, H, T, head_dim]
         """
-        T = q.shape[-2]
-        t = torch.arange(T, device=q.device, dtype=self.inv_freq.dtype)  # type: ignore
-        freqs = torch.outer(t, self.inv_freq)  # type:ignore [T, head_dim/2]
-        emb = torch.cat([freqs, freqs], dim=-1).to(dtype=q.dtype)  # [T, head_dim]
-        cos = emb.cos().view(1, 1, 1, T, -1)
-        sin = emb.sin().view(1, 1, 1, T, -1)
-        return q * cos + self._rotate_half(q) * sin, k * cos + self._rotate_half(k) * sin
+        if q.shape != k.shape:
+            raise ValueError(f"q and k must have the same shape, got q={tuple(q.shape)}, k={tuple(k.shape)}")
+        if q.dim() != 5:
+            raise ValueError(f"q and k must be 5D [B,S,H,T,head_dim], got q.dim()={q.dim()}")
+
+        _, _, _, T, head_dim = q.shape
+        inv_freq = self.inv_freq
+        if not isinstance(inv_freq, torch.Tensor):
+            raise TypeError(f"inv_freq must be torch.Tensor, got {type(inv_freq)}")
+
+        if head_dim % 2 != 0:
+            raise ValueError(f"head_dim must be even for RoPE, got head_dim={head_dim}")
+        if torch.numel(inv_freq) * 2 != head_dim:
+            raise ValueError(
+                f"RoPE inv_freq mismatch: expected head_dim={torch.numel(inv_freq) * 2}, got head_dim={head_dim}"
+            )
+
+        # t: [T]
+        t = torch.arange(T, device=q.device, dtype=inv_freq.dtype)
+        # freqs: [T, head_dim/2]
+        freqs = torch.outer(t, inv_freq)
+
+        # cos/sin: [1, 1, 1, T, head_dim]
+        cos = freqs.cos().repeat_interleave(2, dim=-1).to(dtype=q.dtype).view(1, 1, 1, T, head_dim)
+        sin = freqs.sin().repeat_interleave(2, dim=-1).to(dtype=q.dtype).view(1, 1, 1, T, head_dim)
+
+        q_rot = q * cos + self._rotate_half(q) * sin  # [B, S, H, T, head_dim]
+        k_rot = k * cos + self._rotate_half(k) * sin  # [B, S, H, T, head_dim]
+        return q_rot, k_rot
 
 
 class HSTUKVLayer(nn.Module):
@@ -378,9 +403,9 @@ class HSTUSeqKVEncoder(nn.Module):
         else:
             seq_valid_mask = seq_valid_mask.to(device=seq_tokens.device, dtype=torch.bool)
 
-        empty_seq = seq_valid_mask.sum(dim=-1, keepdim=True) == 0
+        empty_seq = seq_valid_mask.sum(dim=-1, keepdim=True) == 0  # [B, S, 1]
         if empty_seq.any():
-            seq_valid_mask = seq_valid_mask.clone()
+            seq_valid_mask = seq_valid_mask.clone()  # [B, S, T]
             seq_valid_mask[..., 0] = seq_valid_mask[..., 0] | empty_seq.squeeze(-1)
         # if torch.any(seq_valid_mask.sum(dim=-1) == 0):
         #     raise ValueError("Encountered all-padding sequence before KV encoding")
