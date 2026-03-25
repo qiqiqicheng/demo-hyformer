@@ -24,6 +24,7 @@ SEQ_TT_ID = {
     "content_seq": 41,
     "item_seq": 29,
 }
+MAX_SEQ_LEN = 1000
 
 
 def _extract_tt(timestamp: int) -> tuple[int, int]:
@@ -426,7 +427,7 @@ def build_prepared_data(
 
 
 def main():
-    max_seq_len = 10
+    max_seq_len = MAX_SEQ_LEN
     max_delta_tt_bucket = 15
 
     print("Loading data...")

@@ -53,9 +53,10 @@ SUMMARY = json.load(open(DATA_DIR / "processed" / "summary.json"))
 
 
 class DemoDataset(Dataset):
-    def __init__(self, columns: dict[str, np.ndarray]):
+    def __init__(self, columns: dict[str, np.ndarray], max_seq_len: int):
         super().__init__()
         self.columns = columns
+        self.max_seq_len = max_seq_len
         self.length = len(columns["timestamp"])
 
         self.item_sparse_fids = tuple(
@@ -89,6 +90,20 @@ class DemoDataset(Dataset):
             raise ValueError(f"Expected 1D array for {name}, got shape {arr.shape}")
         return torch.as_tensor(arr, dtype=dtype)
 
+    def _array_seq(self, name: str, idx: int, dtype: torch.dtype) -> torch.Tensor:
+        value = self.columns[name][idx]
+        arr = np.asarray(value)
+        if arr.ndim != 1:
+            raise ValueError(f"Expected 1D array for {name}, got shape {arr.shape}")
+
+        arr = arr[-self.max_seq_len :]
+        if arr.shape[0] < self.max_seq_len:
+            padded = np.zeros(self.max_seq_len, dtype=arr.dtype)
+            padded[-arr.shape[0] :] = arr
+            arr = padded
+
+        return torch.as_tensor(arr, dtype=dtype)
+
     def __getitem__(self, idx) -> dict:
         non_seq: dict[str, object] = {
             "item_id": self._scalar("item_id", idx),
@@ -103,54 +118,54 @@ class DemoDataset(Dataset):
         for fid in self.item_dense_fids:
             non_seq[f"item_dense_bin_{fid}"] = self._scalar(f"item_dense_bin_{fid}", idx)
         for fid in self.item_multihot_fids:
-            non_seq[f"item_multihot_{fid}"] = self._array(f"item_multihot_{fid}", idx, torch.long)
+            non_seq[f"item_multihot_{fid}"] = self._array_seq(f"item_multihot_{fid}", idx, torch.long)  # [T]
 
         for fid in self.user_sparse_fids:
             non_seq[f"user_sparse_{fid}"] = self._scalar(f"user_sparse_{fid}", idx)
         for fid in self.user_embedding_fids:
             non_seq[f"user_embedding_{fid}"] = self._array(f"user_embedding_{fid}", idx, torch.float32)
         for fid in self.user_multihot_fids:
-            non_seq[f"user_multihot_{fid}"] = self._array(f"user_multihot_{fid}", idx, torch.long)
+            non_seq[f"user_multihot_{fid}"] = self._array_seq(f"user_multihot_{fid}", idx, torch.long)  # [T]
         for fid in self.user_weighted_multihot_fids:
             non_seq[f"user_weighted_multihot_{fid}"] = {
-                "ids": self._array(f"user_weighted_multihot_{fid}_ids", idx, torch.long),
-                "weights": self._array(f"user_weighted_multihot_{fid}_weights", idx, torch.float32),
+                "ids": self._array_seq(f"user_weighted_multihot_{fid}_ids", idx, torch.long),  # [T]
+                "weights": self._array_seq(f"user_weighted_multihot_{fid}_weights", idx, torch.float32),  # [T]
             }
 
         action_seq = {
-            "action_seq_timestamp": self._array("action_seq_timestamp", idx, torch.long),
-            "action_seq_hour": self._array("action_seq_hour", idx, torch.long),
-            "action_seq_dow": self._array("action_seq_dow", idx, torch.long),
+            "action_seq_timestamp": self._array_seq("action_seq_timestamp", idx, torch.long),  # [T]
+            "action_seq_hour": self._array_seq("action_seq_hour", idx, torch.long),  # [T]
+            "action_seq_dow": self._array_seq("action_seq_dow", idx, torch.long),  # [T]
         }
         for fid in self.seq_fids["action_seq"]:
             if fid == SEQ_TT_ID["action_seq"]:
                 continue
-            action_seq[f"action_seq_{fid}"] = self._array(f"action_seq_{fid}", idx, torch.long)
+            action_seq[f"action_seq_{fid}"] = self._array_seq(f"action_seq_{fid}", idx, torch.long)  # [T]
 
         content_seq = {
-            "content_seq_timestamp": self._array("content_seq_timestamp", idx, torch.long),
-            "content_seq_hour": self._array("content_seq_hour", idx, torch.long),
-            "content_seq_dow": self._array("content_seq_dow", idx, torch.long),
+            "content_seq_timestamp": self._array_seq("content_seq_timestamp", idx, torch.long),  # [T]
+            "content_seq_hour": self._array_seq("content_seq_hour", idx, torch.long),  # [T]
+            "content_seq_dow": self._array_seq("content_seq_dow", idx, torch.long),  # [T]
         }
         for fid in self.seq_fids["content_seq"]:
             if fid == SEQ_TT_ID["content_seq"]:
                 continue
-            content_seq[f"content_seq_{fid}"] = self._array(f"content_seq_{fid}", idx, torch.long)
+            content_seq[f"content_seq_{fid}"] = self._array_seq(f"content_seq_{fid}", idx, torch.long)  # [T]
 
         item_seq = {
-            "item_seq_timestamp": self._array("item_seq_timestamp", idx, torch.long),
-            "item_seq_hour": self._array("item_seq_hour", idx, torch.long),
-            "item_seq_dow": self._array("item_seq_dow", idx, torch.long),
+            "item_seq_timestamp": self._array_seq("item_seq_timestamp", idx, torch.long),  # [T]
+            "item_seq_hour": self._array_seq("item_seq_hour", idx, torch.long),  # [T]
+            "item_seq_dow": self._array_seq("item_seq_dow", idx, torch.long),  # [T]
         }
         for fid in self.seq_fids["item_seq"]:
             if fid == SEQ_TT_ID["item_seq"]:
                 continue
-            item_seq[f"item_seq_{fid}"] = self._array(f"item_seq_{fid}", idx, torch.long)
+            item_seq[f"item_seq_{fid}"] = self._array_seq(f"item_seq_{fid}", idx, torch.long)  # [T]
 
         seq_time_diffs = {
-            "action_seq_time_diff": self._array("action_seq_time_diff", idx, torch.long),
-            "content_seq_time_diff": self._array("content_seq_time_diff", idx, torch.long),
-            "item_seq_time_diff": self._array("item_seq_time_diff", idx, torch.long),
+            "action_seq_time_diff": self._array_seq("action_seq_time_diff", idx, torch.long),  # [T]
+            "content_seq_time_diff": self._array_seq("content_seq_time_diff", idx, torch.long),  # [T]
+            "item_seq_time_diff": self._array_seq("item_seq_time_diff", idx, torch.long),  # [T]
         }
 
         return {
@@ -204,8 +219,8 @@ class DemoDataModule(L.LightningDataModule):
         train_df, val_df = self._train_val_split(df, val_ratio=self.val_ratio)
 
         if stage in (None, "fit"):
-            self.train_dataset = DemoDataset(self._build_columns(train_df))
-            self.val_dataset = DemoDataset(self._build_columns(val_df))
+            self.train_dataset = DemoDataset(self._build_columns(train_df), max_seq_len=self.max_seq_len)
+            self.val_dataset = DemoDataset(self._build_columns(val_df), max_seq_len=self.max_seq_len)
 
     def train_dataloader(self) -> DataLoader:
         return DataLoader(

@@ -36,6 +36,42 @@ class SequenceWiseRMSNorm(nn.Module):
         return normalized * self.weight.view(*weight_shape)
 
 
+class SENetChannelGate(nn.Module):
+    def __init__(self, d_model: int, reduction_ratio: float):
+        super().__init__()
+        if reduction_ratio <= 0:
+            raise ValueError(f"reduction_ratio must be > 0, got {reduction_ratio}")
+
+        hidden_dim = int(d_model / reduction_ratio)
+        if hidden_dim <= 0:
+            raise ValueError(
+                f"Invalid hidden_dim={hidden_dim}, got d_model={d_model}, reduction_ratio={reduction_ratio}"
+            )
+        self.fc1 = nn.Linear(d_model, hidden_dim)
+        self.fc2 = nn.Linear(hidden_dim, d_model)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Input:
+            x: [B, T, D] or [B, S, T, D]
+        Output:
+            gated x with the same shape as input
+        """
+        if x.dim() == 3:
+            # x: [B, T, D]
+            pooled = x.mean(dim=1)  # [B, D]
+            gate = torch.sigmoid(self.fc2(F.silu(self.fc1(pooled))))  # [B, D]
+            return x * gate.unsqueeze(1)  # [B, T, D]
+
+        if x.dim() == 4:
+            # x: [B, S, T, D]
+            pooled = x.mean(dim=2)  # [B, S, D]
+            gate = torch.sigmoid(self.fc2(F.silu(self.fc1(pooled))))  # [B, S, D]
+            return x * gate.unsqueeze(2)  # [B, S, T, D]
+
+        raise ValueError(f"SENetChannelGate expects 3D/4D input, got shape={tuple(x.shape)}")
+
+
 class HyFormer(nn.Module):
     def __init__(
         self,
@@ -52,6 +88,8 @@ class HyFormer(nn.Module):
         mlp_hidden_dim: list[int] = [1024, 512],
         num_seq: int = 3,
         drop_out: float = 0.1,
+        use_senet: bool = False,
+        senet_reduction_ratio: float = 4.0,
         *args,
         **kwargs,
     ):
@@ -67,6 +105,8 @@ class HyFormer(nn.Module):
         self.num_seq = num_seq
         self.mlp_hidden_dim = mlp_hidden_dim
         self.drop_out = drop_out
+        self.use_senet = use_senet
+        self.senet_reduction_ratio = senet_reduction_ratio
         self.max_delta_tt_bucket = max_delta_tt_bucket
         self.max_seq_len = max_seq_len
 
@@ -94,6 +134,7 @@ class HyFormer(nn.Module):
         )
 
         self.non_seq_multi_linear = nn.Linear(self.max_seq_len * self.d_model, self.d_model)
+        # self.non_seq_multi_linear = nn.LazyLinear(self.d_model)
         # TODO: add other transforms like mean / weighted mean to avoid overfitting
 
         self.non_seq_embedding_mlps = []
@@ -117,6 +158,12 @@ class HyFormer(nn.Module):
                 nn.SiLU(),
                 nn.Dropout(p=self.drop_out),
                 nn.Linear(2 * self.non_seq_full_len * self.d_model, self.num_nonseq_tokens * self.d_model),
+            )
+
+        if self.use_senet:
+            self.full_non_seq_se = SENetChannelGate(
+                d_model=self.d_model,
+                reduction_ratio=self.senet_reduction_ratio,
             )
 
         self.action_seq_mlp = nn.Sequential(
@@ -153,6 +200,8 @@ class HyFormer(nn.Module):
             num_seq=self.num_seq,
             ffn_hidden_ratio=2,
             drop_out=self.drop_out,
+            use_senet=self.use_senet,
+            senet_reduction_ratio=self.senet_reduction_ratio,
         )
 
         # hyformer blocks
@@ -166,6 +215,8 @@ class HyFormer(nn.Module):
                 kv_encoder=self.kv_encoder,
                 num_seq=self.num_seq,
                 drop_out=self.drop_out,
+                use_senet=self.use_senet,
+                senet_reduction_ratio=self.senet_reduction_ratio,
             )
             for _ in range(self.num_blocks)
         ])
@@ -225,6 +276,9 @@ class HyFormer(nn.Module):
         full_non_seq_x = torch.cat(
             [non_seq_sparse_emb, non_seq_multi_emb, non_seq_embedding_emb], dim=1
         )  # [B, M_full, D]
+        if self.use_senet:
+            full_non_seq_x = self.full_non_seq_se(full_non_seq_x)  # [B, M_full, D]
+
         if not self.semantic_groups:
             non_seq_x = self.full_non_seq_mlp(full_non_seq_x.reshape(full_non_seq_x.size(0), -1)).reshape(
                 -1, self.num_nonseq_tokens, self.d_model
@@ -317,6 +371,8 @@ class QueryGeneration(nn.Module):
         num_seq: int = 3,
         ffn_hidden_ratio: float = 2.0,
         drop_out: float = 0.1,
+        use_senet: bool = False,
+        senet_reduction_ratio: float = 4.0,
     ):
         super().__init__()
         self.num_global_tokens = num_global_tokens
@@ -324,6 +380,8 @@ class QueryGeneration(nn.Module):
         self.d_model = d_model
         self.num_seq = num_seq
         self.drop_out = drop_out
+        self.use_senet = use_senet
+        self.senet_reduction_ratio = senet_reduction_ratio
 
         global_info_dim = (self.num_nonseq_tokens + 1) * self.d_model
         hidden_dim = int(global_info_dim * ffn_hidden_ratio)
@@ -337,6 +395,12 @@ class QueryGeneration(nn.Module):
 
         self.hidden_dropout = nn.Dropout(p=self.drop_out)
         self.output_norm = SequenceWiseRMSNorm(num_seq=self.num_seq, d_model=self.d_model)
+
+        if self.use_senet:
+            self.global_info_se = SENetChannelGate(
+                d_model=self.d_model,
+                reduction_ratio=self.senet_reduction_ratio,
+            )
 
         self._reset_parameters()
 
@@ -374,6 +438,9 @@ class QueryGeneration(nn.Module):
         non_seq_expanded = non_seq_x.unsqueeze(dim=1).expand(-1, self.num_seq, -1, -1)  # [B, S, M, D]
 
         global_info = torch.cat([seq_pooled, non_seq_expanded], dim=2)  # [B, S, M+1, D]
+        if self.use_senet:
+            global_info = self.global_info_se(global_info)  # [B, S, M+1, D]
+
         global_info_flat = global_info.reshape(B, self.num_seq, -1)  # [B, S, (M+1)*D]
 
         h1 = torch.einsum("bsi,sih->bsh", global_info_flat, self.W1)  # [B, S, Hidden]
@@ -402,6 +469,8 @@ class HyFormerBlock(nn.Module):
         kv_encoder: Callable,
         num_seq: int = 3,
         drop_out: float = 0.1,
+        use_senet: bool = False,
+        senet_reduction_ratio: float = 4.0,
     ):
         super().__init__()
         self.d_model = d_model
@@ -410,6 +479,8 @@ class HyFormerBlock(nn.Module):
         self.num_global_tokens = num_global_tokens  # N
         self.num_nonseq_tokens = num_nonseq_tokens  # M
         self.drop_out = drop_out
+        self.use_senet = use_senet
+        self.senet_reduction_ratio = senet_reduction_ratio
 
         if self.d_model % self.num_heads != 0:
             raise ValueError(
@@ -445,6 +516,12 @@ class HyFormerBlock(nn.Module):
         self.query_dropout = nn.Dropout(p=self.drop_out)
         self.ffn_hidden_dropout = nn.Dropout(p=self.drop_out)
         self.ffn_output_dropout = nn.Dropout(p=self.drop_out)
+
+        if self.use_senet:
+            self.query_boost_se = SENetChannelGate(
+                d_model=self.d_model,
+                reduction_ratio=self.senet_reduction_ratio,
+            )
 
         self._reset_parameters()
 
@@ -522,6 +599,9 @@ class HyFormerBlock(nn.Module):
         assert D % T == 0, f"get D={D}, T={T}, M = {M}, N = {N}"
 
         Q_ = torch.cat([Q_tilda, non_seq_tokens], dim=2)  # [B, S, N + M, D]
+        if self.use_senet:
+            Q_ = self.query_boost_se(Q_)  # [B, S, N + M, D]
+
         Q_ = self.boost_input_norm(Q_)
         sub_dim = D // T
         Q_hat = (

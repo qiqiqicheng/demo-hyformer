@@ -32,6 +32,8 @@ model:
   num_heads: 2
   num_seq: 3
   drop_out: 0.1
+  use_senet: True
+  senet_reduction_ratio: 4.0
 
   semantic_groups_fn:
     mode: null
